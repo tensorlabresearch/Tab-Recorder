@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab Recorder</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>Tab Recorder</h1>
+        <p>Record a tab and upload to Drive.</p>
+      </header>
+
+      <section id="status" class="status"></section>
+
+      <section>
+        <div class="section-title">Tabs</div>
+        <div id="tab-list" class="tab-list"></div>
+      </section>
+
+      <section>
+        <div class="section-title">Drive Folder</div>
+        <div class="folder">
+          <input id="folder-id" type="text" placeholder="Google Drive folder ID" />
+          <button id="save-folder">Save</button>
+        </div>
+        <div class="folder-help">Uploads go to this folder (leave blank for root).</div>
+      </section>
+
+      <section>
+        <div class="section-title">Audio Monitor</div>
+        <label class="toggle">
+          <input id="monitor-audio" type="checkbox" />
+          <span>Play captured audio while recording</span>
+        </label>
+        <div class="toggle-help">Enables local playback while recording (may echo).</div>
+      </section>
+
+      <section>
+        <div class="section-title">Last Upload</div>
+        <div id="last-upload" class="last-upload">No uploads yet.</div>
+        <button id="open-upload" class="open-upload" disabled>Open in Drive</button>
+      </section>
+
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
