@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Recorder to Drive",
+  "version": "0.1.0",
+  "description": "Record tab audio+video and upload to Google Drive.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "tabCapture",
+    "tabs",
+    "storage",
+    "identity",
+    "contextMenus",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://www.googleapis.com/*"
+  ],
+  "action": {
+    "default_title": "Record a tab",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "oauth2": {
+    "client_id": "642161396777-54p091btvctqe60v6b1lk9lc458oniok.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.file"
+    ]
+  }
+}
