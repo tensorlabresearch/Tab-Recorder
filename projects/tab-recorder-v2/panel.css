@@ -1,0 +1,173 @@
+:root {
+  color-scheme: dark;
+  font-family: "Sora", "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0b1220;
+  color: #e8edf3;
+}
+
+.panel {
+  min-height: 100vh;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+
+.loading-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: 0;
+  background: linear-gradient(180deg, #0d1727 0%, #0b1220 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: opacity 180ms ease;
+}
+
+.loading-splash.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading-logo {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.loading-subtitle {
+  font-size: 14px;
+  color: #9bb0c5;
+}
+
+.panel-header h1 {
+  margin: 0 0 6px;
+  font-size: 32px;
+  line-height: 1.1;
+}
+
+.message {
+  min-height: 18px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #9bb0c5;
+}
+
+.card {
+  border: 1px solid #2a3a4f;
+  border-radius: 18px;
+  background: #0f1929;
+  padding: 14px;
+}
+
+.label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: #97aabf;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+
+input,
+textarea {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid #2f4259;
+  background: #0a1524;
+  color: #e8edf3;
+  padding: 12px;
+  font-size: 16px;
+  font-family: inherit;
+}
+
+textarea {
+  min-height: 52vh;
+  resize: none;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  color: #bfccda;
+}
+
+.toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+button {
+  border: none;
+  border-radius: 14px;
+  padding: 11px 16px;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.card > button + button {
+  margin-top: 10px;
+}
+
+#pre-record button {
+  display: block;
+}
+
+#pre-record input + button {
+  margin-top: 12px;
+}
+
+#pre-record button + button {
+  margin-top: 14px;
+}
+
+.primary {
+  background: #2f7f69;
+  color: #edfbf6;
+}
+
+.secondary {
+  background: #1f3342;
+  color: #d9e8f5;
+}
+
+.danger {
+  background: #9a4141;
+  color: #ffecec;
+}
+
+.recording {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.recording-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.recording-top button {
+  flex: 1;
+}
+
+.hidden {
+  display: none;
+}

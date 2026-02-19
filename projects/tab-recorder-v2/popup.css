@@ -1,0 +1,137 @@
+:root {
+  color-scheme: dark;
+  font-family: "Sora", "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: #f3f6f9;
+  background: #0e141b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+  background:
+    radial-gradient(circle at 100% 0%, #1c2b3f 0, transparent 40%),
+    radial-gradient(circle at 0% 100%, #1a2e28 0, transparent 45%),
+    #0e141b;
+}
+
+.app {
+  padding: 14px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+header p {
+  margin: 4px 0 12px;
+  color: #9db0bf;
+  font-size: 12px;
+}
+
+.app section {
+  border: 1px solid #243241;
+  border-radius: 12px;
+  background: rgba(17, 24, 33, 0.85);
+  padding: 10px;
+  margin-bottom: 9px;
+}
+
+.section-title {
+  font-size: 11px;
+  letter-spacing: 0.8px;
+  color: #8fa6b8;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.status {
+  border: 1px solid #2d3f52;
+  background: #142130;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.primary,
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #2f7f69;
+  color: #eefbf6;
+}
+
+.primary.stop {
+  background: #ae433b;
+  color: #fff0ef;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #b9cad8;
+}
+
+.toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+input,
+textarea {
+  flex: 1;
+  border-radius: 8px;
+  border: 1px solid #2b3c4b;
+  padding: 8px 10px;
+  background: #121d28;
+  color: #f3f6f9;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 74px;
+  font-family: inherit;
+}
+
+.hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #8ea1b1;
+}
+
+.active-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  max-height: 124px;
+  overflow-y: auto;
+}
+
+.active-note {
+  border: 1px solid #2d3f51;
+  border-radius: 8px;
+  background: #122031;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #d5e2ec;
+}

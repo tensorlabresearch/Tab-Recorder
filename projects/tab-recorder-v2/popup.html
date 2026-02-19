@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab Recorder</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>Meeting Notes</h1>
+        <p>Capture audio and notes in one flow.</p>
+      </header>
+
+      <section id="status" class="status"></section>
+
+      <section>
+        <div class="section-title">Meeting Name</div>
+        <input id="meeting-label" type="text" placeholder="Test 2" />
+      </section>
+
+      <section>
+        <div class="section-title">Recorder</div>
+        <button id="record-toggle" class="primary">Start Recording Active Tab</button>
+      </section>
+
+      <section>
+        <div class="section-title">Active Notes</div>
+        <div class="row">
+          <textarea id="note-input" placeholder="Write notes..."></textarea>
+        </div>
+        <div id="note-hint" class="hint">Start recording to create notes.</div>
+      </section>
+
+      <section>
+        <div class="section-title">Workspace</div>
+        <div class="row">
+          <button id="open-notes-page">Open Notes Page</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
