@@ -1,3 +1,6 @@
+![Tab Recorder Logo](assets/Logo2.png)
+
+
 # Tab Recorder (Chrome Extension)
 
 Audio-first tab recorder for meetings, with a side-panel workflow, Drive upload, and notes workspace.
