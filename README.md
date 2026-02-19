@@ -1,34 +1,34 @@
-# Tab Recorder Extension (Chrome)
+# Tab Recorder (Chrome Extension)
 
-Records tab audio+video as WebM, then uploads to Google Drive.
+Audio-first tab recorder for meetings, with a side-panel workflow, Drive upload, and notes workspace.
 
-## Setup
-1. Create a Google Cloud project.
-1. Enable the Google Drive API.
-1. Create an OAuth client ID of type **Chrome Extension**.
-1. Load the extension unpacked to get its extension ID.
-1. Add that extension ID to the OAuth client in Google Cloud.
-1. Copy the OAuth client ID into `manifest.json` at `oauth2.client_id`.
-1. Reload the extension.
+## Install (Developer Mode)
 
-## Use
-- Click the extension icon to open the tab picker and start recording.
-- Or right-click a tab and choose **Record this tab**.
-- Click the same tab’s **Stop** button in the popup to finish. Upload is automatic.
-- Optional: set a fixed Google Drive folder ID in the popup.
-- The popup shows the last upload and can open it directly in Drive.
-- Audio monitor plays captured audio locally during recording (enabled by default).
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select: `projects/tab-recorder-v2`
+5. Click the extension icon to open the side panel
 
-## Output
-Uploaded files are named like `tab-recording-YYYYMMDD-HHMMSS.webm`.
+## What You Get
 
-## Optional: convert to MP4 for STT
-```bash
-ffmpeg -i input.webm -c:v libx264 -c:a aac output.mp4
-```
+- Record active tab audio to Google Drive
+- Meeting notes while recording
+- Notes workspace with playback + timestamped playback notes
+- Per-session Drive folder with audio + notes markdown
 
-## Files
-- `manifest.json`: MV3 config + OAuth scopes.
-- `service_worker.js`: state, context menus, offscreen orchestration.
-- `offscreen.html` + `offscreen.js`: capture, recorder, Drive upload.
-- `popup.html` + `popup.js` + `popup.css`: tab picker UI.
+## Repo Layout
+
+- `projects/tab-recorder-v2` -> active extension code (this is the one to install)
+- `projects/tab-recorder-extension` -> older version
+
+## Zip For Sharing
+
+Use the instructions in:
+
+- `projects/tab-recorder-v2/SETUP.md`
+
+## Quick Troubleshooting
+
+- If changes do not appear: go to `chrome://extensions` and click **Reload** on Tab Recorder.
+- If panel opens stale: close/reopen side panel after reload.
