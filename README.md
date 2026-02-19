@@ -1,4 +1,4 @@
-![Tab Recorder Logo](assets/Logo2.png)
+![Tab Recorder Logo](icon128.png)
 
 
 # Tab Recorder (Chrome Extension)
