@@ -1,3 +1,5 @@
+import { debounce } from './lib/utils.js';
+
 const statusEl = document.getElementById("status");
 const preRecordEl = document.getElementById("pre-record");
 const recordingEl = document.getElementById("recording");
@@ -162,14 +164,6 @@ function render() {
   const stopping = stopRequested || state?.status === "stopping";
   stopButton.disabled = Boolean(stopping);
   stopButton.textContent = stopping ? "Stopping..." : "Stop Recording";
-}
-
-function debounce(callback, delayMs) {
-  let timer = null;
-  return function debounced() {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => callback().catch(() => {}), delayMs);
-  };
 }
 
 function getStreamId(tabId) {
