@@ -1,3 +1,5 @@
+import { makeId, formatMmSs, notesBodyToHighlights } from './lib/utils.js';
+
 const OFFSCREEN_URL = "offscreen.html";
 const STORAGE_KEYS = {
   STATE: "v2State",
@@ -703,10 +705,6 @@ function getAuthToken() {
   });
 }
 
-function makeId() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 (async function restoreState() {
   const { [STORAGE_KEYS.STATE]: state } = await chrome.storage.session.get(STORAGE_KEYS.STATE);
   if (state) {
@@ -746,22 +744,3 @@ function makeId() {
   notifyStateChanged();
 })();
 
-function notesBodyToHighlights(notesBody, previousHighlights) {
-  const lines = String(notesBody || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const prev = Array.isArray(previousHighlights) ? previousHighlights : [];
-  return lines.map((text, index) => ({
-    id: makeId(),
-    text,
-    atMs: prev[index]?.atMs ?? index * 1000
-  }));
-}
-
-function formatMmSs(atMs) {
-  const total = Math.max(0, Math.floor(Number(atMs || 0) / 1000));
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}

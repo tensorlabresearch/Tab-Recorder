@@ -36,7 +36,8 @@
     "default_path": "panel.html"
   },
   "background": {
-    "service_worker": "service_worker.js"
+    "service_worker": "service_worker.js",
+    "type": "module"
   },
   "oauth2": {
     "client_id": "642161396777-7pa8k0k0l2dmtgug7gjoh7cfds96844f.apps.googleusercontent.com",

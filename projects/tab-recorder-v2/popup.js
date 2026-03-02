@@ -1,3 +1,5 @@
+import { debounce } from './lib/utils.js';
+
 const statusEl = document.getElementById("status");
 const toggleButton = document.getElementById("record-toggle");
 const noteInput = document.getElementById("note-input");
@@ -134,14 +136,3 @@ function cleanMeetingLabel() {
   return value || "Untitled Meeting";
 }
 
-function debounce(callback, delayMs) {
-  let timer = null;
-  return function debounced() {
-    if (timer) {
-      clearTimeout(timer);
-    }
-    timer = setTimeout(() => {
-      callback().catch(() => {});
-    }, delayMs);
-  };
-}
