@@ -2,3 +2,6 @@ node_modules/
 coverage/
 *.zip
 .DS_Store
+.beads/
+.runtime/
+CLAUDE.md
