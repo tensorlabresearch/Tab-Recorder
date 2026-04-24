@@ -1,3 +1,10 @@
+import {
+  isLocalSaveEnabled,
+  getSaveFolder,
+  saveSessionAudio,
+  saveSessionTranscript
+} from "./lib/fileStorage.js";
+
 const sessionsEl = document.getElementById("sessions");
 const searchEl = document.getElementById("search");
 const uploadMediaButton = document.getElementById("upload-media");
@@ -268,6 +275,23 @@ function renderSessions() {
       });
       actions.append(sendToDriveButton);
     }
+
+    // Add Save Locally button
+    const saveLocallyButton = document.createElement("button");
+    saveLocallyButton.textContent = "Save Locally";
+    saveLocallyButton.className = "secondary";
+    saveLocallyButton.addEventListener("click", async () => {
+      saveLocallyButton.disabled = true;
+      try {
+        await saveSessionToLocal(session);
+        statusEl.textContent = "Session saved locally.";
+      } catch (error) {
+        statusEl.textContent = String(error);
+      } finally {
+        saveLocallyButton.disabled = false;
+      }
+    });
+    actions.append(saveLocallyButton);
     if (transcriptPanel) {
       left.append(player.wrap, notesEditor, transcriptPanel.wrap, actions);
     } else {
@@ -1281,6 +1305,57 @@ function transcriptionWaitHint(durationMs) {
   if (minutes >= 60) return " Large file: this can take 10+ minutes.";
   if (minutes >= 30) return " This may take several minutes.";
   return "";
+}
+
+/**
+ * Save a session's audio and transcript to local folder
+ * @param {Object} session
+ */
+async function saveSessionToLocal(session) {
+  const localSaveEnabled = await isLocalSaveEnabled();
+  if (!localSaveEnabled) {
+    throw new Error("Local file saving is not enabled. Go to Settings to enable it.");
+  }
+
+  const { handle } = await getSaveFolder();
+  if (!handle) {
+    throw new Error("No save folder selected. Go to Settings to choose a folder.");
+  }
+
+  // Get format preferences
+  const localStorage = globalThis.chrome?.storage?.local;
+  const stored = await localStorage?.get(["localAudioFormat", "localTranscriptFormat"]);
+  const audioFormat = stored?.localAudioFormat || "webm";
+  const transcriptFormat = stored?.localTranscriptFormat || "txt";
+
+  // Get audio blob
+  const state = getAudioState(session.id);
+  let audioBlob = state.audioBlob;
+  if (!audioBlob) {
+    await ensureAudioLoaded(session);
+    audioBlob = state.audioBlob;
+  }
+
+  // Save audio
+  if (audioBlob && audioBlob.size > 0) {
+    const result = await saveSessionAudio(session, audioBlob, audioFormat);
+    if (!result.success) {
+      throw new Error(`Failed to save audio: ${result.error}`);
+    }
+  }
+
+  // Save transcript if available
+  if (session?.transcriptText) {
+    const result = await saveSessionTranscript(
+      session,
+      session.transcriptText,
+      session.transcriptWords || [],
+      transcriptFormat
+    );
+    if (!result.success) {
+      throw new Error(`Failed to save transcript: ${result.error}`);
+    }
+  }
 }
 
 function formatSpeedValue(value) {

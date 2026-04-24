@@ -9,6 +9,7 @@ const sendNoteButton = document.getElementById("send-note-btn");
 const startButton = document.getElementById("start-btn");
 const stopButton = document.getElementById("stop-btn");
 const openNotesPageButton = document.getElementById("open-notes-page-btn");
+const openSettingsButton = document.getElementById("open-settings-btn");
 const loadingSplashEl = document.getElementById("loading-splash");
 
 let state = null;
@@ -29,6 +30,9 @@ async function init() {
   sendNoteButton.addEventListener("click", onSendNote);
   openNotesPageButton.addEventListener("click", async () => {
     await chrome.tabs.create({ url: chrome.runtime.getURL("notes_page.html") });
+  });
+  openSettingsButton.addEventListener("click", async () => {
+    await chrome.tabs.create({ url: chrome.runtime.getURL("settings.html") });
   });
   meetingLabelInput.addEventListener("input", () => persistLabelDebounced());
   meetingLabelInput.addEventListener("blur", () => {

@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab Recorder Settings</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="top">
+        <h1>Settings</h1>
+        <p>Configure save locations and export preferences.</p>
+      </header>
+
+      <section class="card">
+        <h2>Local File Storage</h2>
+        <p class="hint">
+          Save recordings and transcripts directly to a folder on your computer.
+        </p>
+
+        <div class="form-group">
+          <label class="toggle">
+            <input id="enable-local-save" type="checkbox" />
+            <span>Enable local file saving</span>
+          </label>
+        </div>
+
+        <div id="folder-section" class="folder-section">
+          <div class="form-group">
+            <label>Save Folder</label>
+            <div class="folder-display">
+              <span id="folder-path" class="folder-path">No folder selected</span>
+              <button id="select-folder-btn" class="secondary">Choose Folder</button>
+            </div>
+            <p class="help-text">
+              Recordings will be organized by date: <code>YYYY-MM-DD/meeting-name/</code>
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label>Audio Format</label>
+            <select id="audio-format">
+              <option value="webm">WebM (default)</option>
+              <option value="mp3">MP3</option>
+              <option value="wav">WAV</option>
+              <option value="mp4">MP4</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Transcript Format</label>
+            <select id="transcript-format">
+              <option value="txt">Plain Text</option>
+              <option value="json">JSON (with timestamps)</option>
+              <option value="md">Markdown</option>
+            </select>
+          </div>
+
+          <div class="folder-actions">
+            <button id="open-folder-btn" class="secondary" disabled>Open Folder</button>
+            <button id="clear-folder-btn" class="danger" disabled>Clear</button>
+          </div>
+        </div>
+
+        <div id="browser-warning" class="warning hidden">
+          <strong>Note:</strong> Local file saving requires Chrome/Edge with File System Access API support.
+          Saving to Google Drive will still work.
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Google Drive</h2>
+        <p class="hint">
+          Configure your Google Drive save location.
+        </p>
+        <div class="form-group">
+          <button id="drive-settings-btn" class="secondary">
+            Configure Drive Folder
+          </button>
+          <p class="help-text">
+            Opens the notes workspace where you can set the Drive folder.
+          </p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Recent Sessions</h2>
+        <div class="toolbar">
+          <button id="open-notes-btn" class="primary">Open Notes Workspace</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast"></div>
+
+    <script type="module" src="settings.js"></script>
+  </body>
+</html>

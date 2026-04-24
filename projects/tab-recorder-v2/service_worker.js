@@ -1,4 +1,5 @@
 import { makeId, formatMmSs, notesBodyToHighlights } from './lib/utils.js';
+import { isLocalSaveEnabled, getSaveFolder, saveSessionAudio, saveSessionTranscript } from './lib/fileStorage.js';
 
 const OFFSCREEN_URL = "offscreen.html";
 const STORAGE_KEYS = {
@@ -639,6 +640,9 @@ async function handleOffscreenStatus(payload) {
       };
       await saveSession(finalized);
       STATE.lastUpload = data;
+
+      // Also save locally if enabled
+      await saveSessionLocally(finalized, payload.audioBlob);
     }
     STATE.recording = false;
     STATE.status = "idle";
@@ -703,6 +707,45 @@ function getAuthToken() {
       resolve(token);
     });
   });
+}
+
+/**
+ * Save session files locally if enabled
+ * @param {Object} session
+ * @param {Blob} audioBlob
+ */
+async function saveSessionLocally(session, audioBlob) {
+  const localSaveEnabled = await isLocalSaveEnabled();
+  if (!localSaveEnabled) return;
+
+  const { handle } = await getSaveFolder();
+  if (!handle) return;
+
+  try {
+    // Get format preferences
+    const localStorage = globalThis.chrome?.storage?.local;
+    const stored = await localStorage?.get(["localAudioFormat", "localTranscriptFormat"]);
+    const audioFormat = stored?.localAudioFormat || "webm";
+    const transcriptFormat = stored?.localTranscriptFormat || "txt";
+
+    // Save audio if blob is available
+    if (audioBlob && audioBlob.size > 0) {
+      await saveSessionAudio(session, audioBlob, audioFormat);
+    }
+
+    // Save transcript if available
+    if (session?.transcriptText) {
+      await saveSessionTranscript(
+        session,
+        session.transcriptText,
+        session.transcriptWords || [],
+        transcriptFormat
+      );
+    }
+  } catch (error) {
+    // Log but don't fail - local save is optional
+    console.error("Local save failed:", error);
+  }
 }
 
 (async function restoreState() {

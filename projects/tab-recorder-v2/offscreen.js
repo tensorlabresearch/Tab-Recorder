@@ -187,7 +187,8 @@ async function setupCapture(streamId, includeMic) {
             sizeBytes: blob.size,
             mimeType: currentMimeType,
             sessionId: sessionIdSnapshot
-          }
+          },
+          audioBlob: blob // Send blob for local saving
         }
       });
     } catch (error) {
