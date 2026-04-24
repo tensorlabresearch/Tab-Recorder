@@ -1,0 +1,55 @@
+[package]
+name = "tab-recorder-desktop"
+version = "0.1.0"
+description = "Tab Recorder Desktop - System audio capture application"
+authors = ["Tab Recorder Team"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.70"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-fs = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-notification = "2.0"
+tauri-plugin-log = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Audio capture dependencies
+cpal = "0.15"
+ringbuf = "0.4"
+
+# Async runtime
+tokio = { version = "1.40", features = ["rt-multi-thread", "sync", "time", "fs"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+log = "0.4"
+
+# Audio encoding
+hound = "3.5"
+
+# Cross-platform audio loopback (system audio)
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Win32_Media_Audio_CoreAudio", "Win32_System_Com", "Win32_Media_Audio", "Win32_Media_Multimedia"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+coreaudio-rs = "0.11"
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libpulse-binding = "2.28"
+libpulse-simple-binding = "2.28"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
