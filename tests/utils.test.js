@@ -8,7 +8,9 @@ import {
   sanitizeName,
   formatNoteTime,
   buildNotesContent,
-  debounce
+  debounce,
+  parseHtml,
+  extractLinks
 } from '../projects/tab-recorder-v2/lib/utils.js';
 
 describe('makeId', () => {
@@ -245,5 +247,140 @@ describe('debounce', () => {
     debounced();
     expect(() => vi.advanceTimersByTime(100)).not.toThrow();
     expect(fn).toHaveBeenCalledOnce();
+  });
+});
+
+describe('parseHtml', () => {
+  it('extracts title from HTML', () => {
+    const html = '<html><head><title>My Page Title</title></head><body></body></html>';
+    const result = parseHtml(html);
+    expect(result.title).toBe('My Page Title');
+  });
+
+  it('extracts headings with levels', () => {
+    const html = `
+      <h1>Main Title</h1>
+      <h2>Subtitle</h2>
+      <h3>Section</h3>
+    `;
+    const result = parseHtml(html);
+    expect(result.headings).toHaveLength(3);
+    expect(result.headings[0]).toEqual({ level: 1, text: 'Main Title' });
+    expect(result.headings[1]).toEqual({ level: 2, text: 'Subtitle' });
+    expect(result.headings[2]).toEqual({ level: 3, text: 'Section' });
+  });
+
+  it('extracts paragraphs', () => {
+    const html = '<p>First paragraph.</p><p>Second paragraph.</p>';
+    const result = parseHtml(html);
+    expect(result.paragraphs).toHaveLength(2);
+    expect(result.paragraphs[0]).toBe('First paragraph.');
+    expect(result.paragraphs[1]).toBe('Second paragraph.');
+  });
+
+  it('extracts links with href and text', () => {
+    const html = '<a href="https://example.com">Visit Example</a>';
+    const result = parseHtml(html);
+    expect(result.links).toHaveLength(1);
+    expect(result.links[0]).toEqual({ href: 'https://example.com', text: 'Visit Example' });
+  });
+
+  it('extracts images with src and alt', () => {
+    const html = '<img src="/image.png" alt="Description"><img src="/logo.svg">';
+    const result = parseHtml(html);
+    expect(result.images).toHaveLength(2);
+    expect(result.images[0]).toEqual({ src: '/image.png', alt: 'Description' });
+    expect(result.images[1]).toEqual({ src: '/logo.svg', alt: '' });
+  });
+
+  it('returns empty arrays for null input', () => {
+    const result = parseHtml(null);
+    expect(result.headings).toHaveLength(0);
+    expect(result.paragraphs).toHaveLength(0);
+    expect(result.links).toHaveLength(0);
+    expect(result.images).toHaveLength(0);
+  });
+
+  it('returns empty arrays for empty string input', () => {
+    const result = parseHtml('');
+    expect(result.headings).toHaveLength(0);
+    expect(result.paragraphs).toHaveLength(0);
+  });
+
+  it('handles HTML with nested tags in headings', () => {
+    const html = '<h1>Welcome <em>visitor</em></h1>';
+    const result = parseHtml(html);
+    expect(result.headings[0].text).toBe('Welcome visitor');
+  });
+
+  it('filters empty paragraphs', () => {
+    const html = '<p>   </p><p>Content</p>';
+    const result = parseHtml(html);
+    expect(result.paragraphs).toHaveLength(1);
+    expect(result.paragraphs[0]).toBe('Content');
+  });
+});
+
+describe('extractLinks', () => {
+  it('extracts absolute URLs', () => {
+    const html = '<a href="https://example.com/page">Link</a>';
+    const result = extractLinks(html, 'https://example.com');
+    expect(result).toContain('https://example.com/page');
+  });
+
+  it('resolves relative URLs against base URL', () => {
+    const html = '<a href="/path/to/page">Link</a>';
+    const result = extractLinks(html, 'https://example.com');
+    expect(result).toContain('https://example.com/path/to/page');
+  });
+
+  it('resolves protocol-relative URLs', () => {
+    const html = '<a href="//cdn.example.com/file.js">Link</a>';
+    const result = extractLinks(html, 'https://example.com');
+    expect(result).toContain('https://cdn.example.com/file.js');
+  });
+
+  it('deduplicates identical links', () => {
+    const html = '<a href="https://example.com">Link 1</a><a href="https://example.com">Link 2</a>';
+    const result = extractLinks(html, 'https://example.com');
+    expect(result).toHaveLength(1);
+  });
+
+  it('excludes non-http URLs', () => {
+    const html = '<a href="mailto:test@example.com">Email</a><a href="javascript:void(0)">JS</a>';
+    const result = extractLinks(html, 'https://example.com');
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns empty array for null input', () => {
+    const result = extractLinks(null, 'https://example.com');
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns empty array for empty string input', () => {
+    const result = extractLinks('', 'https://example.com');
+    expect(result).toHaveLength(0);
+  });
+
+  it('strips URL fragments', () => {
+    const html = '<a href="https://example.com/page#section">Link</a>';
+    const result = extractLinks(html, 'https://example.com');
+    expect(result[0]).toBe('https://example.com/page');
+  });
+
+  it('handles multiple links', () => {
+    const html = `
+      <a href="/page1">Page 1</a>
+      <a href="/page2">Page 2</a>
+      <a href="https://external.com">External</a>
+    `;
+    const result = extractLinks(html, 'https://example.com');
+    expect(result).toHaveLength(3);
+  });
+
+  it('resolves paths relative to current directory', () => {
+    const html = '<a href="subdir/page.html">Link</a>';
+    const result = extractLinks(html, 'https://example.com/folder/');
+    expect(result[0]).toBe('https://example.com/folder/subdir/page.html');
   });
 });
