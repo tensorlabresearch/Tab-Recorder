@@ -7,11 +7,13 @@
   "permissions": [
     "activeTab",
     "tabCapture",
+    "desktopCapture",
     "tabs",
     "storage",
     "identity",
     "offscreen",
-    "sidePanel"
+    "sidePanel",
+    "downloads"
   ],
   "host_permissions": [
     "<all_urls>",

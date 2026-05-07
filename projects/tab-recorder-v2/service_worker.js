@@ -1,5 +1,4 @@
 import { makeId, formatMmSs, notesBodyToHighlights } from './lib/utils.js';
-import { isLocalSaveEnabled, getSaveFolder, saveSessionAudio, saveSessionTranscript } from './lib/fileStorage.js';
 
 const OFFSCREEN_URL = "offscreen.html";
 const STORAGE_KEYS = {
@@ -69,15 +68,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "start-recording") {
-    startRecording(message.tabId, message.meetingLabel, message.streamId)
+  if (message.type === "start-recording" || message.type === "start-recording-with-stream") {
+    startRecording(message.tabId, message.meetingLabel, message.streamId, message.sourceType)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: String(error) }));
     return true;
   }
 
-  if (message.type === "start-recording-with-stream") {
-    startRecording(message.tabId, message.meetingLabel, message.streamId)
+  if (message.type === "start-recording-pick") {
+    startRecordingViaPicker(message.meetingLabel)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: String(error) }));
     return true;
@@ -218,22 +217,65 @@ async function ensureOffscreenDocument() {
   });
 }
 
-async function startRecording(tabId, meetingLabel, providedStreamId) {
+async function startRecordingViaPicker(meetingLabel) {
+  if (STATE.recording) {
+    throw new Error("Already recording");
+  }
+  const cleanLabel = String(meetingLabel || "").trim() || "Untitled meeting";
+  const session = {
+    id: makeId(),
+    tabId: null,
+    tabTitle: cleanLabel,
+    meetingLabel: cleanLabel,
+    tabUrl: "",
+    startedAt: Date.now(),
+    endedAt: null,
+    status: "recording",
+    notesBody: "",
+    noteEvents: [],
+    highlights: [],
+    drive: null,
+    durationMs: null
+  };
+
+  STATE.recording = true;
+  STATE.status = "starting";
+  STATE.session = session;
+  STATE.lastMeetingLabel = cleanLabel;
+  STATE.lastError = null;
+  const localStorage = globalThis.chrome?.storage?.local;
+  if (localStorage) {
+    localStorage.set({ [STORAGE_KEYS.LAST_MEETING_LABEL]: STATE.lastMeetingLabel }).catch(() => {});
+  }
+  await persistState();
+  notifyStateChanged();
+
+  await ensureOffscreenDocument();
+  chrome.runtime.sendMessage({
+    type: "offscreen-pick-and-start",
+    payload: { sessionId: session.id, includeMic: STATE.includeMic }
+  }).catch(() => {});
+}
+
+async function startRecording(tabId, meetingLabel, providedStreamId, sourceType) {
   if (STATE.recording) {
     throw new Error("Already recording");
   }
 
-  const tab = await chrome.tabs.get(tabId);
+  let tab = null;
+  if (Number.isInteger(tabId)) {
+    try { tab = await chrome.tabs.get(tabId); } catch (_) {}
+  }
   const streamId =
     providedStreamId || (await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }));
 
   const cleanLabel = String(meetingLabel || "").trim();
   const session = {
     id: makeId(),
-    tabId,
-    tabTitle: tab.title || "Untitled tab",
-    meetingLabel: cleanLabel || tab.title || "Untitled meeting",
-    tabUrl: tab.url || "",
+    tabId: tabId || null,
+    tabTitle: tab?.title || "Untitled tab",
+    meetingLabel: cleanLabel || tab?.title || "Untitled meeting",
+    tabUrl: tab?.url || "",
     startedAt: Date.now(),
     endedAt: null,
     status: "recording",
@@ -261,10 +303,11 @@ async function startRecording(tabId, meetingLabel, providedStreamId) {
     type: "offscreen-start",
     payload: {
       streamId,
+      sourceType: sourceType || "tab",
       sessionId: session.id,
       includeMic: STATE.includeMic
     }
-  });
+  }).catch(() => {});
 }
 
 async function stopRecording(reason) {
@@ -280,7 +323,7 @@ async function stopRecording(reason) {
       reason,
       session: STATE.session
     }
-  });
+  }).catch(() => {});
 }
 
 async function addHighlight(text) {
@@ -598,6 +641,16 @@ async function handleOffscreenStatus(payload) {
     return;
   }
 
+  if (payload.event === "recording-canceled") {
+    STATE.recording = false;
+    STATE.status = "idle";
+    STATE.session = null;
+    STATE.lastError = null;
+    await persistState();
+    notifyStateChanged();
+    return;
+  }
+
   if (payload.event === "recording-error") {
     STATE.status = "error";
     STATE.recording = false;
@@ -630,6 +683,7 @@ async function handleOffscreenStatus(payload) {
 
   if (payload.event === "upload-complete") {
     const data = payload.data || null;
+    const driveError = payload.driveError || null;
     if (STATE.session) {
       const finalized = {
         ...STATE.session,
@@ -640,14 +694,14 @@ async function handleOffscreenStatus(payload) {
       };
       await saveSession(finalized);
       STATE.lastUpload = data;
-
-      // Also save locally if enabled
       await saveSessionLocally(finalized, payload.audioBlob);
     }
     STATE.recording = false;
-    STATE.status = "idle";
+    STATE.status = driveError ? "error" : "idle";
     STATE.session = null;
-    STATE.lastError = null;
+    STATE.lastError = driveError
+      ? `Saved locally. Drive upload failed: ${driveError}`
+      : null;
     await persistState();
     notifyStateChanged();
     return;
@@ -694,7 +748,7 @@ function notifyStateChanged() {
   chrome.runtime.sendMessage({
     type: "state-changed",
     payload: getStatePayload()
-  });
+  }).catch(() => {});
 }
 
 function getAuthToken() {
@@ -709,41 +763,21 @@ function getAuthToken() {
   });
 }
 
-/**
- * Save session files locally if enabled
- * @param {Object} session
- * @param {Blob} audioBlob
- */
 async function saveSessionLocally(session, audioBlob) {
-  const localSaveEnabled = await isLocalSaveEnabled();
-  if (!localSaveEnabled) return;
-
-  const { handle } = await getSaveFolder();
-  if (!handle) return;
+  if (!audioBlob || audioBlob.size === 0) return;
 
   try {
-    // Get format preferences
-    const localStorage = globalThis.chrome?.storage?.local;
-    const stored = await localStorage?.get(["localAudioFormat", "localTranscriptFormat"]);
-    const audioFormat = stored?.localAudioFormat || "webm";
-    const transcriptFormat = stored?.localTranscriptFormat || "txt";
+    const date = session?.startedAt ? new Date(session.startedAt) : new Date();
+    const dateStr = date.toISOString().split("T")[0];
+    const timeStr = date.toTimeString().slice(0, 5).replace(":", "-");
+    const name = String(session?.meetingLabel || "recording")
+      .replace(/[^\w\s-]/g, "").replace(/\s+/g, "-").slice(0, 40);
+    const filename = `Tab Recorder/${dateStr}/${name}_${timeStr}.webm`;
 
-    // Save audio if blob is available
-    if (audioBlob && audioBlob.size > 0) {
-      await saveSessionAudio(session, audioBlob, audioFormat);
-    }
-
-    // Save transcript if available
-    if (session?.transcriptText) {
-      await saveSessionTranscript(
-        session,
-        session.transcriptText,
-        session.transcriptWords || [],
-        transcriptFormat
-      );
-    }
+    const blobUrl = URL.createObjectURL(audioBlob);
+    await chrome.downloads.download({ url: blobUrl, filename, saveAs: false });
+    URL.revokeObjectURL(blobUrl);
   } catch (error) {
-    // Log but don't fail - local save is optional
     console.error("Local save failed:", error);
   }
 }

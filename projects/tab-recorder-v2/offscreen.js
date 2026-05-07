@@ -50,6 +50,14 @@ chrome.runtime.onMessage.addListener((message) => {
     startRecording(
       message.payload?.streamId,
       message.payload?.sessionId,
+      Boolean(message.payload?.includeMic),
+      message.payload?.sourceType || "tab"
+    );
+  }
+
+  if (message.type === "offscreen-pick-and-start") {
+    pickAndStart(
+      message.payload?.sessionId,
       Boolean(message.payload?.includeMic)
     );
   }
@@ -59,7 +67,35 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-async function startRecording(streamId, sessionId, includeMic) {
+let currentSourceType = "tab";
+
+async function pickAndStart(sessionId, includeMic) {
+  let streamId;
+  try {
+    streamId = await new Promise((resolve, reject) => {
+      chrome.desktopCapture.chooseDesktopMedia(["tab", "audio"], (id) => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError.message);
+        else resolve(id || null);
+      });
+    });
+  } catch (error) {
+    chrome.runtime.sendMessage({
+      type: "offscreen-status",
+      payload: { event: "recording-error", error: String(error), sessionId }
+    });
+    return;
+  }
+  if (!streamId) {
+    chrome.runtime.sendMessage({
+      type: "offscreen-status",
+      payload: { event: "recording-canceled", sessionId }
+    });
+    return;
+  }
+  await startRecording(streamId, sessionId, includeMic, "desktop");
+}
+
+async function startRecording(streamId, sessionId, includeMic, sourceType) {
   if (!streamId) return;
 
   if (mediaRecorder) {
@@ -70,6 +106,7 @@ async function startRecording(streamId, sessionId, includeMic) {
   currentSessionMeta = null;
   currentStreamId = streamId;
   currentIncludeMic = includeMic;
+  currentSourceType = sourceType || "tab";
   recordedChunks = [];
   currentChunkIndex = 0;
   chunkWriteQueue = Promise.resolve();
@@ -78,7 +115,7 @@ async function startRecording(streamId, sessionId, includeMic) {
   await clearCachedChunks(currentSessionId).catch(() => {});
 
   try {
-    await setupCapture(streamId, includeMic);
+    await setupCapture(streamId, includeMic, currentSourceType);
     chrome.runtime.sendMessage({
       type: "offscreen-status",
       payload: { event: "recording-started", data: { sessionId } }
@@ -102,20 +139,31 @@ async function stopRecording(sessionMeta) {
   mediaRecorder = null;
 }
 
-async function setupCapture(streamId, includeMic) {
-  const tabStream = await navigator.mediaDevices.getUserMedia({
+async function setupCapture(streamId, includeMic, sourceType) {
+  const isDesktop = sourceType === "desktop";
+  const mediaSource = isDesktop ? "desktop" : "tab";
+  // Desktop capture often requires video constraints too — request it but discard the track
+  const constraints = {
     audio: {
       mandatory: {
-        chromeMediaSource: "tab",
+        chromeMediaSource: mediaSource,
         chromeMediaSourceId: streamId
       },
       optional: AUDIO_OPTIONAL_CONSTRAINTS
     },
-    video: false
-  });
+    video: isDesktop
+      ? { mandatory: { chromeMediaSource: mediaSource, chromeMediaSourceId: streamId } }
+      : false
+  };
+  const tabStream = await navigator.mediaDevices.getUserMedia(constraints);
 
   if (!tabStream.getAudioTracks().length) {
-    throw new Error("No tab audio track found. Ensure tab audio is playing and unmuted.");
+    throw new Error("No audio track in shared tab. Make sure 'Share tab audio' is checked in the picker.");
+  }
+  // Drop video tracks immediately to free resources
+  for (const videoTrack of tabStream.getVideoTracks()) {
+    videoTrack.stop();
+    tabStream.removeTrack(videoTrack);
   }
   currentTabStream = tabStream;
   currentMicStream = includeMic ? await getMicStreamSafe() : null;
@@ -175,28 +223,25 @@ async function setupCapture(streamId, includeMic) {
     currentSessionMeta = null;
     stopTracks();
 
+    let driveData = null;
+    let driveError = null;
     try {
       const fileInfo = await uploadToDrive(blob, currentMimeType, sessionMetaSnapshot);
-      await clearCachedChunks(sessionIdSnapshot).catch(() => {});
-      chrome.runtime.sendMessage({
-        type: "offscreen-status",
-        payload: {
-          event: "upload-complete",
-          data: {
-            ...fileInfo,
-            sizeBytes: blob.size,
-            mimeType: currentMimeType,
-            sessionId: sessionIdSnapshot
-          },
-          audioBlob: blob // Send blob for local saving
-        }
-      });
+      driveData = { ...fileInfo, sizeBytes: blob.size, mimeType: currentMimeType, sessionId: sessionIdSnapshot };
     } catch (error) {
-      chrome.runtime.sendMessage({
-        type: "offscreen-status",
-        payload: { event: "upload-error", error: String(error), sessionId: sessionIdSnapshot }
-      });
+      driveError = String(error);
     }
+    await clearCachedChunks(sessionIdSnapshot).catch(() => {});
+    chrome.runtime.sendMessage({
+      type: "offscreen-status",
+      payload: {
+        event: "upload-complete",
+        data: driveData,
+        driveError,
+        audioBlob: blob,
+        sessionId: sessionIdSnapshot
+      }
+    });
   };
 
   mediaRecorder.start(1000);

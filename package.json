@@ -3,9 +3,13 @@
   "name": "tab-recorder",
   "version": "0.1.0",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:e2e": "PWHEADLESS=false xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "vitest": "^3.0.0"
   }
 }
