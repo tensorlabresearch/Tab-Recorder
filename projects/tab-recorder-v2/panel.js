@@ -1,14 +1,10 @@
-import { debounce } from './lib/utils.js';
-
 const statusEl = document.getElementById("status");
+const recordingStatusEl = document.getElementById("recording-status");
 const preRecordEl = document.getElementById("pre-record");
 const recordingEl = document.getElementById("recording");
 const meetingLabelInput = document.getElementById("meeting-label");
-const notesPad = document.getElementById("notes-pad");
-const sendNoteButton = document.getElementById("send-note-btn");
 const startButton = document.getElementById("start-btn");
 const stopButton = document.getElementById("stop-btn");
-const openNotesPageButton = document.getElementById("open-notes-page-btn");
 const openSettingsButton = document.getElementById("open-settings-btn");
 const loadingSplashEl = document.getElementById("loading-splash");
 
@@ -17,7 +13,6 @@ let recordedChunks = [];
 let audioContext = null;
 let activeTracks = [];
 let currentSession = null;
-let stopRequested = false;
 
 init();
 
@@ -38,26 +33,12 @@ function init() {
       statusEl.textContent = String(error?.message || error);
     });
   });
-  sendNoteButton.addEventListener("click", () => onSendNote().catch(() => {}));
-  openNotesPageButton.addEventListener("click", async () => {
-    await chrome.tabs.create({ url: chrome.runtime.getURL("notes_page.html") });
-  });
   openSettingsButton.addEventListener("click", async () => {
     await chrome.tabs.create({ url: chrome.runtime.getURL("settings.html") });
-  });
-  notesPad.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      onSendNote().catch(() => {});
-    }
-  });
-  notesPad.addEventListener("input", () => {
-    sendNoteButton.disabled = !mediaRecorder || !String(notesPad.value || "").trim();
   });
 
   window.addEventListener("beforeunload", () => {
     if (mediaRecorder && mediaRecorder.state === "recording") {
-      // Try to flush before the panel goes away
       try { mediaRecorder.stop(); } catch (_) {}
     }
   });
@@ -88,10 +69,9 @@ async function onStartRecording() {
   if (!audioTracks.length) {
     for (const t of displayStream.getTracks()) t.stop();
     startButton.disabled = false;
-    statusEl.textContent = "No tab audio. Make sure 'Share tab audio' is checked in the picker.";
+    statusEl.textContent = "No tab audio. Make sure 'Share tab audio' is checked.";
     return;
   }
-  // Drop the video track — we only want audio
   for (const t of displayStream.getVideoTracks()) {
     t.stop();
     displayStream.removeTrack(t);
@@ -104,7 +84,6 @@ async function onStartRecording() {
       video: false
     });
   } catch (_) {
-    // Mic optional — recording continues without it
     statusEl.textContent = "Mic unavailable; recording tab audio only.";
   }
 
@@ -137,7 +116,6 @@ async function onStartRecording() {
     statusEl.textContent = `Recorder error: ${event.error?.message || event.error}`;
   };
 
-  // Track when the user stops sharing via the Chrome banner
   audioTracks[0].addEventListener("ended", () => {
     if (mediaRecorder && mediaRecorder.state === "recording") {
       try { mediaRecorder.stop(); } catch (_) {}
@@ -161,21 +139,19 @@ async function onStartRecording() {
 
   preRecordEl.classList.add("hidden");
   recordingEl.classList.remove("hidden");
-  statusEl.textContent = `Recording: ${meetingLabel}`;
+  recordingStatusEl.textContent = `Recording: ${meetingLabel}`;
   startButton.disabled = false;
 }
 
 async function onStopRecording() {
   if (!mediaRecorder || mediaRecorder.state !== "recording") return;
-  stopRequested = true;
   stopButton.disabled = true;
   stopButton.textContent = "Saving...";
-  statusEl.textContent = "Saving recording...";
+  recordingStatusEl.textContent = "Saving recording...";
   mediaRecorder.stop();
 }
 
 function resetRecordingUI() {
-  stopRequested = false;
   preRecordEl.classList.remove("hidden");
   recordingEl.classList.add("hidden");
   stopButton.disabled = false;
@@ -248,30 +224,6 @@ function buildFileName(label) {
   const safe = String(label || "recording")
     .replace(/[^\w\s-]/g, "").replace(/\s+/g, "-").slice(0, 50) || "recording";
   return `${dateStr}/${safe}_${hh}-${mm}.webm`;
-}
-
-async function onSendNote() {
-  if (!mediaRecorder || mediaRecorder.state !== "recording" || !currentSession) return;
-  const text = String(notesPad.value || "").trim();
-  if (!text) return;
-  // Note timestamps relative to recording start
-  const atMs = Date.now() - currentSession.startedAt;
-  await chrome.runtime.sendMessage({
-    type: "add-highlight",
-    sessionId: currentSession.id,
-    text,
-    atMs
-  }).catch(() => {});
-  notesPad.value = "";
-  statusEl.textContent = `Note saved at ${formatMs(atMs)}`;
-  sendNoteButton.disabled = true;
-}
-
-function formatMs(ms) {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
 }
 
 function cleanMeetingLabel() {

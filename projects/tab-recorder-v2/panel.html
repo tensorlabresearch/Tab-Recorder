@@ -2,34 +2,27 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Meeting Notes</title>
+    <title>Tab Recorder</title>
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body>
     <main class="panel">
       <section id="loading-splash" class="loading-splash">
         <div class="loading-logo">Tab Recorder</div>
-        <div class="loading-subtitle">Loading workspace...</div>
+        <div class="loading-subtitle">Loading...</div>
       </section>
-      <header class="panel-header">
-        <h1>Meeting Notes</h1>
-      </header>
 
       <section id="pre-record" class="card">
         <div id="status" class="message"></div>
         <label class="label" for="meeting-label">Recording Name</label>
         <input id="meeting-label" type="text" />
         <button id="start-btn" class="primary">Start Recording</button>
-        <button id="open-notes-page-btn" class="secondary">Open Notes Page</button>
         <button id="open-settings-btn" class="secondary">Settings</button>
       </section>
 
       <section id="recording" class="card recording hidden">
-        <div class="recording-top">
-          <button id="stop-btn" class="danger">Stop Recording</button>
-        </div>
-        <textarea id="notes-pad" placeholder="Type notes..."></textarea>
-        <button id="send-note-btn" class="primary">Send Note</button>
+        <div id="recording-status" class="message"></div>
+        <button id="stop-btn" class="danger">Stop Recording</button>
       </section>
     </main>
 

@@ -53,16 +53,6 @@ body {
   color: #9bb0c5;
 }
 
-.panel-header h1 {
-  margin: 0 0 4px;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: #97aabf;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
 .message {
   min-height: 14px;
   margin-bottom: 4px;
@@ -91,46 +81,27 @@ body {
 input,
 textarea {
   width: 100%;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid #2f4259;
   background: #0a1524;
   color: #e8edf3;
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 10px;
+  font-size: 14px;
   font-family: inherit;
-}
-
-textarea {
-  min-height: 40vh;
-  resize: none;
-}
-
-.toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 6px 0;
-  color: #bfccda;
-  font-size: 11px;
-}
-
-.toggle input {
-  width: 14px;
-  height: 14px;
 }
 
 button {
   border: none;
-  border-radius: 8px;
-  padding: 6px 10px;
+  border-radius: 10px;
+  padding: 10px 12px;
   font-weight: 600;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   width: 100%;
 }
 
 .card > button + button {
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 #pre-record button {
@@ -138,11 +109,11 @@ button {
 }
 
 #pre-record input + button {
-  margin-top: 6px;
+  margin-top: 10px;
 }
 
 #pre-record button + button {
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 .primary {
@@ -164,16 +135,6 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 1;
-}
-
-.recording-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.recording-top button {
   flex: 1;
 }
 
