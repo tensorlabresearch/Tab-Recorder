@@ -22,8 +22,7 @@ Audio-first tab recorder for meetings, with a side-panel workflow, Drive upload,
 
 ## Repo Layout
 
-- `projects/tab-recorder-v2` -> active extension code (this is the one to install)
-- `projects/tab-recorder-extension` -> older version
+- `projects/tab-recorder-v2` -> extension code
 
 ## Zip For Sharing
 
