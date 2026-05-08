@@ -20,37 +20,23 @@ const STATE = {
   invokedTabId: null
 };
 
-configureSidePanelBehavior();
+const PANEL_URL = chrome.runtime.getURL("panel.html");
 
-chrome.runtime.onInstalled.addListener(() => {
-  configureSidePanelBehavior();
+chrome.action.onClicked.addListener(async () => {
+  await openOrFocusPanelTab();
 });
 
-chrome.runtime.onStartup.addListener(() => {
-  configureSidePanelBehavior();
-});
-
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab?.id || !tab?.windowId) return;
-  STATE.invokedTabId = tab.id;
-  await persistState();
-  notifyStateChanged();
-  if (chrome.sidePanel?.setOptions) {
-    await chrome.sidePanel
-      .setOptions({
-        tabId: tab.id,
-        path: "panel.html",
-        enabled: true
-      })
-      .catch(() => {});
+async function openOrFocusPanelTab() {
+  const existing = await chrome.tabs.query({ url: PANEL_URL });
+  if (existing.length > 0) {
+    const tab = existing[0];
+    if (Number.isInteger(tab.windowId)) {
+      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    }
+    await chrome.tabs.update(tab.id, { active: true });
+    return;
   }
-});
-
-async function configureSidePanelBehavior() {
-  if (!chrome.sidePanel?.setPanelBehavior) return;
-  await chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch(() => {});
+  await chrome.tabs.create({ url: PANEL_URL, active: true });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

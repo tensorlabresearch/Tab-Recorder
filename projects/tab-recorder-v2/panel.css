@@ -101,7 +101,7 @@ button {
 }
 
 .card > button + button {
-  margin-top: 8px;
+  margin-top: 5px;
 }
 
 #pre-record button {
@@ -109,11 +109,11 @@ button {
 }
 
 #pre-record input + button {
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 #pre-record button + button {
-  margin-top: 8px;
+  margin-top: 5px;
 }
 
 .primary {
@@ -134,8 +134,54 @@ button {
 .recording {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
+}
+
+.elapsed {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: #e8edf3;
+  margin: 4px 0;
+}
+
+.meters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.meter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meter-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #97aabf;
+  text-transform: uppercase;
+  width: 28px;
+  flex-shrink: 0;
+}
+
+.meter-bar {
+  flex: 1;
+  height: 8px;
+  background: #0a1524;
+  border: 1px solid #2f4259;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2f7f69 0%, #6ec39c 70%, #f0b03f 90%, #d96565 100%);
+  transition: width 60ms linear;
 }
 
 .hidden {
