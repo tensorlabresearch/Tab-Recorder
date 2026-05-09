@@ -7,24 +7,61 @@
   </head>
   <body>
     <main class="panel">
+      <header class="panel-header">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div class="brand-text">
+            <div class="brand-name">Tab Recorder</div>
+            <div class="brand-subtitle">Audio capture for tabs and mic</div>
+          </div>
+        </div>
+      </header>
+
       <section id="loading-splash" class="loading-splash">
         <div class="loading-logo">Tab Recorder</div>
         <div class="loading-subtitle">Loading...</div>
       </section>
 
       <section id="pre-record" class="card">
+        <div class="card-section">
+          <div class="field">
+            <label class="label" for="meeting-label">Recording Name</label>
+            <input id="meeting-label" type="text" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label class="label" for="mic-select">Microphone</label>
+            <select id="mic-select"></select>
+          </div>
+          <label class="checkbox-row">
+            <input id="monitor-toggle" type="checkbox" />
+            <span>Play tab audio through speakers</span>
+          </label>
+          <div class="folder-status">
+            <div class="folder-status-text">
+              <span class="folder-status-label">Recordings folder</span>
+              <span id="folder-name" class="folder-name">Not granted</span>
+            </div>
+            <button id="pick-folder-btn" class="text-button" type="button">Pick Folder</button>
+          </div>
+        </div>
+
         <div id="status" class="message"></div>
-        <label class="label" for="meeting-label">Recording Name</label>
-        <input id="meeting-label" type="text" />
-        <label class="label" for="mic-select">Microphone</label>
-        <select id="mic-select"></select>
-        <button id="start-btn" class="primary">Start Recording</button>
-        <button id="open-settings-btn" class="secondary">Settings</button>
+
+        <div class="actions">
+          <button id="start-btn" class="primary">Start Recording</button>
+          <button id="open-settings-btn" class="ghost">Settings</button>
+        </div>
       </section>
 
       <section id="recording" class="card recording hidden">
-        <div id="recording-status" class="message"></div>
-        <div id="elapsed" class="elapsed">00:00</div>
+        <div class="record-hero">
+          <div class="record-status">
+            <span class="rec-dot" aria-hidden="true"></span>
+            <span id="recording-status" class="record-label">Recording</span>
+          </div>
+          <div id="elapsed" class="elapsed">00:00</div>
+        </div>
+
         <div class="meters">
           <div class="meter-row">
             <span class="meter-label">Tab</span>
@@ -35,7 +72,32 @@
             <div class="meter-bar"><div id="mic-level" class="meter-fill"></div></div>
           </div>
         </div>
-        <button id="stop-btn" class="danger">Stop Recording</button>
+
+        <div class="card-section is-bordered">
+          <div class="field">
+            <label class="label" for="mic-select-live">Microphone</label>
+            <select id="mic-select-live"></select>
+          </div>
+          <label class="checkbox-row">
+            <input id="monitor-toggle-live" type="checkbox" />
+            <span>Play tab audio through speakers</span>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="change-tab-btn" class="ghost">Change Tab</button>
+          <button id="stop-btn" class="danger">Stop Recording</button>
+        </div>
+      </section>
+
+      <section id="recordings-section" class="recordings-section">
+        <div class="recordings-header">
+          <h2 class="recordings-title">Recordings</h2>
+          <button id="refresh-recordings-btn" class="text-button" type="button">Refresh</button>
+        </div>
+        <div id="recordings-list" class="recordings-list">
+          <div class="recordings-empty">No recordings yet.</div>
+        </div>
       </section>
     </main>
 

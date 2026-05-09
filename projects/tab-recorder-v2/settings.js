@@ -1,209 +1,217 @@
 import {
-  isFileSystemAccessAvailable,
-  selectSaveFolder,
-  getSaveFolder,
-  isLocalSaveEnabled,
-  setLocalSaveEnabled,
-  clearSaveFolder,
-  getSupportedAudioFormats,
-  getSupportedTranscriptFormats
-} from "./lib/fileStorage.js";
+  WHISPER_MODELS,
+  DEFAULT_WHISPER_MODEL_ID,
+  getSelectedModelId,
+  setSelectedModelId,
+  isModelCached,
+  findModel,
+  formatModelSize
+} from "./lib/whisperModel.js";
 
-const STORAGE_KEYS = {
-  AUDIO_FORMAT: "localAudioFormat",
-  TRANSCRIPT_FORMAT: "localTranscriptFormat"
-};
-
-const enableLocalSaveCheckbox = document.getElementById("enable-local-save");
-const folderSection = document.getElementById("folder-section");
-const folderPathEl = document.getElementById("folder-path");
-const selectFolderBtn = document.getElementById("select-folder-btn");
-const openFolderBtn = document.getElementById("open-folder-btn");
-const clearFolderBtn = document.getElementById("clear-folder-btn");
-const audioFormatSelect = document.getElementById("audio-format");
-const transcriptFormatSelect = document.getElementById("transcript-format");
-const browserWarningEl = document.getElementById("browser-warning");
-const driveSettingsBtn = document.getElementById("drive-settings-btn");
-const openNotesBtn = document.getElementById("open-notes-btn");
+const modelSelect = document.getElementById("model-select");
+const engineStateEl = document.getElementById("engine-state");
+const cacheStateEl = document.getElementById("cache-state");
+const progressWrap = document.getElementById("model-progress-wrap");
+const progressFill = document.getElementById("model-progress-fill");
+const progressText = document.getElementById("model-progress-text");
+const downloadButton = document.getElementById("download-model-btn");
+const clearCacheButton = document.getElementById("clear-cache-btn");
 const toastEl = document.getElementById("toast");
 
-let currentFolderHandle = null;
+let activeWorker = null;
 
-init().catch((error) => {
-  showToast(`Error: ${error.message}`, "error");
-});
+init().catch((error) => showToast(`Error: ${error?.message || error}`, "error"));
 
 async function init() {
-  // Check if File System Access API is available
-  const fsAvailable = isFileSystemAccessAvailable();
-  if (!fsAvailable) {
-    browserWarningEl.classList.remove("hidden");
-    enableLocalSaveCheckbox.disabled = true;
-  }
+  buildModelOptions(WHISPER_MODELS, await getSelectedModelId());
 
-  // Load saved settings
-  await loadSettings();
+  detectEngineCapability().then((label) => {
+    engineStateEl.textContent = label;
+    if (label === "WebGPU available") engineStateEl.classList.add("is-positive");
+  });
 
-  // Setup event listeners
-  enableLocalSaveCheckbox.addEventListener("change", onEnableLocalSaveChange);
-  selectFolderBtn.addEventListener("click", onSelectFolder);
-  openFolderBtn.addEventListener("click", onOpenFolder);
-  clearFolderBtn.addEventListener("click", onClearFolder);
-  audioFormatSelect.addEventListener("change", onAudioFormatChange);
-  transcriptFormatSelect.addEventListener("change", onTranscriptFormatChange);
-  driveSettingsBtn.addEventListener("click", onDriveSettings);
-  openNotesBtn.addEventListener("click", onOpenNotes);
-}
+  await refreshCacheState();
 
-async function loadSettings() {
-  const localStorage = globalThis.chrome?.storage?.local;
-  if (!localStorage) return;
-
-  // Load local save enabled state
-  const localSaveEnabled = await isLocalSaveEnabled();
-  enableLocalSaveCheckbox.checked = localSaveEnabled;
-
-  // Load folder info
-  const { name, handle } = await getSaveFolder();
-  currentFolderHandle = handle;
-  updateFolderDisplay(name);
-
-  // Update UI based on enabled state
-  updateFolderSectionState(localSaveEnabled);
-
-  // Load format preferences
-  const stored = await localStorage.get([
-    STORAGE_KEYS.AUDIO_FORMAT,
-    STORAGE_KEYS.TRANSCRIPT_FORMAT
-  ]);
-
-  if (stored[STORAGE_KEYS.AUDIO_FORMAT]) {
-    audioFormatSelect.value = stored[STORAGE_KEYS.AUDIO_FORMAT];
-  }
-  if (stored[STORAGE_KEYS.TRANSCRIPT_FORMAT]) {
-    transcriptFormatSelect.value = stored[STORAGE_KEYS.TRANSCRIPT_FORMAT];
-  }
-}
-
-async function onEnableLocalSaveChange() {
-  const enabled = enableLocalSaveCheckbox.checked;
-  await setLocalSaveEnabled(enabled);
-  updateFolderSectionState(enabled);
-
-  if (enabled && !currentFolderHandle) {
-    showToast("Please select a save folder", "info");
-  } else {
-    showToast(enabled ? "Local saving enabled" : "Local saving disabled", "success");
-  }
-}
-
-function updateFolderSectionState(enabled) {
-  if (enabled) {
-    folderSection.classList.remove("disabled");
-    openFolderBtn.disabled = !currentFolderHandle;
-    clearFolderBtn.disabled = false;
-  } else {
-    folderSection.classList.add("disabled");
-    openFolderBtn.disabled = true;
-    clearFolderBtn.disabled = true;
-  }
-}
-
-function updateFolderDisplay(folderName) {
-  if (folderName) {
-    folderPathEl.textContent = folderName;
-    folderPathEl.classList.add("has-folder");
-    openFolderBtn.disabled = !enableLocalSaveCheckbox.checked;
-  } else {
-    folderPathEl.textContent = "No folder selected";
-    folderPathEl.classList.remove("has-folder");
-    openFolderBtn.disabled = true;
-  }
-}
-
-async function onSelectFolder() {
-  try {
-    const handle = await selectSaveFolder();
-    if (handle) {
-      currentFolderHandle = handle;
-      updateFolderDisplay(handle.name);
-      openFolderBtn.disabled = !enableLocalSaveCheckbox.checked;
-      showToast(`Folder "${handle.name}" selected`, "success");
+  modelSelect.addEventListener("change", async () => {
+    try {
+      await setSelectedModelId(modelSelect.value);
+      await refreshCacheState();
+      showToast(`Selected ${findModel(modelSelect.value)?.label || modelSelect.value}`, "success");
+    } catch (error) {
+      showToast(`Error: ${error?.message || error}`, "error");
     }
-  } catch (error) {
-    showToast(`Failed to select folder: ${error.message}`, "error");
+  });
+
+  downloadButton.addEventListener("click", onWarmupModel);
+  clearCacheButton.addEventListener("click", onClearCache);
+}
+
+function buildModelOptions(models, current) {
+  modelSelect.innerHTML = "";
+  for (const m of models) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.label;
+    modelSelect.appendChild(opt);
+  }
+  modelSelect.value = current && findModel(current) ? current : DEFAULT_WHISPER_MODEL_ID;
+}
+
+async function refreshCacheState() {
+  const id = modelSelect.value;
+  const model = findModel(id);
+  const cached = await isModelCached(id);
+  if (cached) {
+    cacheStateEl.textContent = `Cached (${formatModelSize(model?.approxBytes)})`;
+    cacheStateEl.classList.add("is-positive");
+  } else {
+    cacheStateEl.textContent = `Not downloaded (~${formatModelSize(model?.approxBytes)})`;
+    cacheStateEl.classList.remove("is-positive");
   }
 }
 
-async function onOpenFolder() {
-  if (!currentFolderHandle) {
-    showToast("No folder selected", "error");
+async function detectEngineCapability() {
+  if (!("gpu" in navigator)) return "WASM CPU (no WebGPU)";
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (adapter) return "WebGPU available";
+    return "WASM CPU (WebGPU adapter unavailable)";
+  } catch (_) {
+    return "WASM CPU (WebGPU adapter unavailable)";
+  }
+}
+
+async function onWarmupModel() {
+  if (activeWorker) {
+    showToast("A warmup is already running.", "info");
     return;
   }
+  const modelId = modelSelect.value;
+  console.log("[settings] starting warmup", { modelId });
+  downloadButton.disabled = true;
+  downloadButton.textContent = "Downloading...";
+  clearCacheButton.disabled = true;
+  progressWrap.classList.remove("hidden");
+  setProgress(0, "Spawning worker...");
+  showToast(`Loading ${modelId}...`, "info");
 
-  // Unfortunately, we can't directly open the system file manager
-  // But we can provide feedback that it's accessible
-  showToast(`Folder "${currentFolderHandle.name}" is ready for saving`, "success");
-
-  // Try to verify access by listing entries
+  const workerUrl = chrome.runtime.getURL("lib/whisperWorker.js");
+  let worker;
   try {
-    const entries = [];
-    for await (const entry of currentFolderHandle.entries()) {
-      entries.push(entry.name);
-      if (entries.length >= 5) break; // Just check a few
+    worker = new Worker(workerUrl, { type: "module" });
+  } catch (error) {
+    console.error("[settings] worker construction failed", error);
+    showToast(`Failed to spawn worker: ${error?.message || error}`, "error");
+    finishWarmup({ ok: false });
+    return;
+  }
+  activeWorker = worker;
+  const jobId = "warmup-" + Math.random().toString(36).slice(2, 10);
+
+  // Some module-worker errors during top-level evaluation never reach
+  // worker.onerror in Chrome. Set a watchdog: if we don't receive any
+  // message in 30s, assume the worker failed silently and surface it.
+  const watchdog = setTimeout(() => {
+    if (activeWorker !== worker) return;
+    console.error("[settings] worker startup timeout (30s with no messages)");
+    showToast("Worker didn't respond after 30s — check DevTools console for module load errors.", "error");
+    finishWarmup({ ok: false });
+  }, 30_000);
+  let receivedAnyMessage = false;
+
+  worker.onmessage = (event) => {
+    const data = event.data || {};
+    receivedAnyMessage = true;
+    clearTimeout(watchdog);
+    console.log("[settings] worker message", data);
+    if (data.type === "worker-booting") {
+      setProgress(0, "Worker starting (loading transformers.js bundle)...");
+      return;
     }
-  } catch (error) {
-    // Permission may have expired, ask user to re-select
-    showToast("Folder access expired. Please re-select the folder.", "error");
-    currentFolderHandle = null;
-    updateFolderDisplay(null);
-  }
+    if (data.type === "worker-ready") {
+      setProgress(0, "Worker ready, sending warmup...");
+      worker.postMessage({ type: "warmup", jobId, modelId });
+      return;
+    }
+    if (data.type === "worker-import-error") {
+      showToast(`Library load failed: ${data.error}`, "error");
+      console.error("[settings] worker import error", data);
+      finishWarmup({ ok: false });
+      return;
+    }
+    if (data.jobId && data.jobId !== jobId) return;
+    if (data.type === "downloadProgress") {
+      const pct = data.progress || (data.total ? data.loaded / data.total : 0);
+      setProgress(pct / 100,
+        `${data.file || "model"}: ${formatModelSize(data.loaded)} / ${formatModelSize(data.total)}`);
+    } else if (data.type === "stage") {
+      progressText.textContent = data.stage;
+    } else if (data.type === "engine") {
+      engineStateEl.textContent = data.device === "webgpu" ? "WebGPU active" : "WASM CPU";
+      if (data.device === "webgpu") engineStateEl.classList.add("is-positive");
+    } else if (data.type === "done") {
+      finishWarmup({ ok: true });
+    } else if (data.type === "error") {
+      showToast(`Warmup failed: ${data.error}`, "error");
+      finishWarmup({ ok: false });
+    }
+  };
+  worker.onerror = (event) => {
+    const detail = [
+      event.message,
+      event.filename ? `at ${event.filename}${event.lineno != null ? ":" + event.lineno : ""}` : null,
+      event.error?.message && event.error.message !== event.message ? `(${event.error.message})` : null,
+      event.error?.stack ? event.error.stack.split("\n")[0] : null
+    ].filter(Boolean).join(" ");
+    console.error("[settings] worker error", event);
+    showToast(`Worker error: ${detail || "no details from runtime (check DevTools console)"}`, "error");
+    finishWarmup({ ok: false });
+  };
+  worker.onmessageerror = (event) => {
+    console.error("[settings] worker message error", event);
+    showToast("Worker message error (postMessage cloning failed)", "error");
+    finishWarmup({ ok: false });
+  };
+
+  // The worker now self-initiates the warmup once it sends "worker-ready".
+  // We don't post anything here so the import has time to finish first.
 }
 
-async function onClearFolder() {
-  if (!currentFolderHandle) return;
+function finishWarmup({ ok }) {
+  if (activeWorker) {
+    activeWorker.terminate();
+    activeWorker = null;
+  }
+  downloadButton.disabled = false;
+  downloadButton.textContent = "Download / Warm Up Model";
+  clearCacheButton.disabled = false;
+  progressWrap.classList.add("hidden");
+  setProgress(0, "");
+  if (ok) showToast("Model ready.", "success");
+  refreshCacheState().catch(() => {});
+}
 
-  const confirmed = confirm("Clear the saved folder? You'll need to select it again to save locally.");
-  if (!confirmed) return;
-
+async function onClearCache() {
+  if (!confirm("Clear the cached transcription model? You'll re-download on next use.")) return;
   try {
-    await clearSaveFolder();
-    currentFolderHandle = null;
-    updateFolderDisplay(null);
-    showToast("Folder cleared", "success");
+    if ("caches" in self) {
+      await caches.delete("transformers-cache");
+    }
+    showToast("Model cache cleared.", "success");
   } catch (error) {
-    showToast(`Error clearing folder: ${error.message}`, "error");
+    showToast(`Clear failed: ${error?.message || error}`, "error");
   }
+  await refreshCacheState();
 }
 
-async function onAudioFormatChange() {
-  const localStorage = globalThis.chrome?.storage?.local;
-  if (localStorage) {
-    await localStorage.set({ [STORAGE_KEYS.AUDIO_FORMAT]: audioFormatSelect.value });
-  }
-}
-
-async function onTranscriptFormatChange() {
-  const localStorage = globalThis.chrome?.storage?.local;
-  if (localStorage) {
-    await localStorage.set({ [STORAGE_KEYS.TRANSCRIPT_FORMAT]: transcriptFormatSelect.value });
-  }
-}
-
-async function onDriveSettings() {
-  await chrome.tabs.create({ url: chrome.runtime.getURL("notes_page.html") });
-}
-
-async function onOpenNotes() {
-  await chrome.tabs.create({ url: chrome.runtime.getURL("notes_page.html") });
+function setProgress(fraction, text) {
+  progressFill.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
+  progressText.textContent = text;
 }
 
 function showToast(message, type = "info") {
   toastEl.textContent = message;
   toastEl.className = `toast ${type}`;
   toastEl.classList.add("show");
-
-  setTimeout(() => {
-    toastEl.classList.remove("show");
-  }, 3000);
+  setTimeout(() => toastEl.classList.remove("show"), 3000);
 }

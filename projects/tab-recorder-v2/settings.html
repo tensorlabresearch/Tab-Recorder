@@ -9,85 +9,70 @@
     <main class="page">
       <header class="top">
         <h1>Settings</h1>
-        <p>Configure save locations and export preferences.</p>
+        <p>Local recording, transcription, and storage.</p>
       </header>
 
       <section class="card">
-        <h2>Local File Storage</h2>
+        <h2>Recordings Folder</h2>
         <p class="hint">
-          Save recordings and transcripts directly to a folder on your computer.
+          Recordings are saved to your browser's Downloads folder under
+          <code>Tab Recorder/</code>.
         </p>
-
-        <div class="form-group">
-          <label class="toggle">
-            <input id="enable-local-save" type="checkbox" />
-            <span>Enable local file saving</span>
-          </label>
-        </div>
-
-        <div id="folder-section" class="folder-section">
-          <div class="form-group">
-            <label>Save Folder</label>
-            <div class="folder-display">
-              <span id="folder-path" class="folder-path">No folder selected</span>
-              <button id="select-folder-btn" class="secondary">Choose Folder</button>
-            </div>
-            <p class="help-text">
-              Recordings will be organized by date: <code>YYYY-MM-DD/meeting-name/</code>
-            </p>
-          </div>
-
-          <div class="form-group">
-            <label>Audio Format</label>
-            <select id="audio-format">
-              <option value="webm">WebM (default)</option>
-              <option value="mp3">MP3</option>
-              <option value="wav">WAV</option>
-              <option value="mp4">MP4</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label>Transcript Format</label>
-            <select id="transcript-format">
-              <option value="txt">Plain Text</option>
-              <option value="json">JSON (with timestamps)</option>
-              <option value="md">Markdown</option>
-            </select>
-          </div>
-
-          <div class="folder-actions">
-            <button id="open-folder-btn" class="secondary" disabled>Open Folder</button>
-            <button id="clear-folder-btn" class="danger" disabled>Clear</button>
-          </div>
-        </div>
-
-        <div id="browser-warning" class="warning hidden">
-          <strong>Note:</strong> Local file saving requires Chrome/Edge with File System Access API support.
-          Saving to Google Drive will still work.
-        </div>
       </section>
 
       <section class="card">
-        <h2>Google Drive</h2>
+        <h2>Local Transcription</h2>
         <p class="hint">
-          Configure your Google Drive save location.
+          Transcripts are produced locally with Transformers.js (whisper
+          via onnxruntime-web). When available, WebGPU is used for a
+          significant speedup; otherwise the WASM CPU backend runs.
         </p>
+
         <div class="form-group">
-          <button id="drive-settings-btn" class="secondary">
-            Configure Drive Folder
-          </button>
-          <p class="help-text">
-            Opens the notes workspace where you can set the Drive folder.
-          </p>
+          <label for="model-select">Model</label>
+          <select id="model-select"></select>
         </div>
+
+        <div class="model-status">
+          <div class="model-status-row">
+            <span class="model-label">Engine</span>
+            <span id="engine-state" class="model-value">Detecting...</span>
+          </div>
+          <div class="model-status-row">
+            <span class="model-label">Cached</span>
+            <span id="cache-state" class="model-value">Checking...</span>
+          </div>
+        </div>
+
+        <div id="model-progress-wrap" class="progress hidden">
+          <div class="progress-bar">
+            <div id="model-progress-fill" class="progress-fill"></div>
+          </div>
+          <div id="model-progress-text" class="progress-text">0%</div>
+        </div>
+
+        <div class="folder-actions">
+          <button id="download-model-btn" class="primary">Download / Warm Up Model</button>
+          <button id="clear-cache-btn" class="danger">Clear Model Cache</button>
+        </div>
+
+        <p class="help-text">
+          The model is downloaded from HuggingFace once and cached by the
+          browser. Subsequent transcriptions reuse the cache.
+        </p>
       </section>
 
       <section class="card">
-        <h2>Recent Sessions</h2>
-        <div class="toolbar">
-          <button id="open-notes-btn" class="primary">Open Notes Workspace</button>
-        </div>
+        <h2>About</h2>
+        <p class="hint">
+          MP3 conversion uses
+          <a href="https://lame.sourceforge.net/" target="_blank" rel="noopener">LAME</a>
+          via
+          <a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener">lamejs</a>
+          (LGPL-3.0). Speech recognition uses
+          <a href="https://github.com/huggingface/transformers.js" target="_blank" rel="noopener">Transformers.js</a>
+          (Apache-2.0) running ONNX Whisper models.
+        </p>
       </section>
     </main>
 

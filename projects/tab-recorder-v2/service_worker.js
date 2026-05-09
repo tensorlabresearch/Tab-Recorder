@@ -54,6 +54,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "get-orphan-downloads") {
+    getOrphanDownloads()
+      .then((orphans) => sendResponse({ ok: true, orphans }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
+
   if (message.type === "start-recording" || message.type === "start-recording-with-stream") {
     startRecording(message.tabId, message.meetingLabel, message.streamId, message.sourceType)
       .then(() => sendResponse({ ok: true }))
@@ -159,6 +166,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "delete-session") {
     deleteSession(message.sessionId)
       .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
+
+  if (message.type === "save-session") {
+    saveSessionFromPanel(message.session)
+      .then((session) => sendResponse({ ok: true, session }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
+
+  if (message.type === "update-session-mp3") {
+    updateSessionMp3(message.sessionId, message.mp3)
+      .then((session) => sendResponse({ ok: true, session }))
       .catch((error) => sendResponse({ ok: false, error: String(error) }));
     return true;
   }
@@ -608,13 +629,168 @@ async function deleteSession(sessionId) {
   const id = String(sessionId || "").trim();
   if (!id) throw new Error("Session ID is required");
 
+  // Synthesized row backed only by a download (no session store record)
+  if (id.startsWith("dl-")) {
+    const downloadId = Number(id.slice(3));
+    if (Number.isInteger(downloadId)) {
+      try { await chrome.downloads.removeFile(downloadId); } catch (_) {}
+      try { await chrome.downloads.erase({ id: downloadId }); } catch (_) {}
+    }
+    return;
+  }
+
+  // Synthesized row backed only by a filesystem scan; the panel handles the file removal.
+  if (id.startsWith("fs-")) return;
+
   const sessions = await getSessions();
+  const session = sessions.find((item) => item?.id === id);
   const filtered = sessions.filter((item) => item?.id !== id);
   const localStorage = globalThis.chrome?.storage?.local;
   if (!localStorage) {
     throw new Error("Storage API unavailable in service worker");
   }
   await localStorage.set({ [STORAGE_KEYS.SESSIONS]: filtered.slice(0, 300) });
+
+  if (session) {
+    const ids = [session.downloadId, session.mp3DownloadId].filter(Number.isInteger);
+    for (const downloadId of ids) {
+      try { await chrome.downloads.removeFile(downloadId); } catch (_) {}
+      try { await chrome.downloads.erase({ id: downloadId }); } catch (_) {}
+    }
+  }
+}
+
+async function getOrphanDownloads() {
+  const localStorage = globalThis.chrome?.storage?.local;
+  const stored = await getSessions();
+  let downloads = [];
+  try {
+    downloads = await chrome.downloads.search({
+      filenameRegex: "Tab Recorder.*\\.webm$",
+      orderBy: ["-startTime"],
+      limit: 200
+    });
+  } catch (_) {
+    downloads = [];
+  }
+
+  let durationCache = {};
+  if (localStorage) {
+    try {
+      const result = await localStorage.get("v2DurationCache");
+      durationCache = result?.v2DurationCache || {};
+    } catch (_) {
+      durationCache = {};
+    }
+  }
+
+  const knownDownloadIds = new Set(
+    stored.map((s) => s?.downloadId).filter(Number.isInteger)
+  );
+
+  return downloads
+    .filter((it) => it && it.state === "complete" && it.exists !== false)
+    .filter((it) => !knownDownloadIds.has(it.id))
+    .map((download) => {
+      const session = synthesizeSessionFromDownload(download);
+      const cached = Number(durationCache[session.fileName]);
+      if (Number.isFinite(cached) && cached > 0) {
+        session.durationMs = cached;
+      }
+      return session;
+    });
+}
+
+function synthesizeSessionFromDownload(download) {
+  const fullPath = String(download.filename || "");
+  const basename = fullPath.split(/[\/\\]/).pop() || "recording";
+  let label = basename.replace(/\.[a-z0-9]+$/i, "");
+  label = label.replace(/_\d{2}-\d{2}$/, "");
+  label = label.replace(/[-_]/g, " ").trim() || "Recording";
+
+  const tabRecorderIdx = fullPath.indexOf("Tab Recorder");
+  const relativeName = tabRecorderIdx >= 0 ? fullPath.slice(tabRecorderIdx) : basename;
+
+  const startedAt = download.startTime ? Date.parse(download.startTime) || Date.now() : Date.now();
+
+  return {
+    id: `dl-${download.id}`,
+    tabId: null,
+    tabTitle: label,
+    meetingLabel: label,
+    tabUrl: "",
+    startedAt,
+    endedAt: startedAt,
+    durationMs: 0,
+    status: "complete",
+    notesBody: "",
+    noteEvents: [],
+    highlights: [],
+    drive: null,
+    fileName: relativeName,
+    downloadId: download.id,
+    audioFormat: "webm",
+    audioMimeType: "audio/webm",
+    transcriptText: "",
+    transcriptWords: [],
+    mp3DownloadId: null,
+    mp3FileName: ""
+  };
+}
+
+async function saveSessionFromPanel(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Session payload required");
+  }
+  const startedAt = Number(payload.startedAt) || Date.now();
+  const endedAt = Number(payload.endedAt) || Date.now();
+  const session = {
+    id: String(payload.id || makeId()),
+    tabId: null,
+    tabTitle: String(payload.tabTitle || payload.meetingLabel || "Untitled"),
+    meetingLabel: String(payload.meetingLabel || "Untitled"),
+    tabUrl: String(payload.tabUrl || ""),
+    startedAt,
+    endedAt,
+    durationMs: Math.max(0, Number(payload.durationMs || endedAt - startedAt)),
+    status: "complete",
+    notesBody: "",
+    noteEvents: [],
+    highlights: [],
+    drive: null,
+    fileName: String(payload.fileName || ""),
+    downloadId: Number.isInteger(payload.downloadId) ? payload.downloadId : null,
+    audioFormat: String(payload.audioFormat || "webm"),
+    audioMimeType: String(payload.audioMimeType || ""),
+    transcriptText: "",
+    transcriptWords: [],
+    mp3DownloadId: null,
+    mp3FileName: ""
+  };
+  await saveSession(session);
+  return session;
+}
+
+async function updateSessionMp3(sessionId, mp3) {
+  const id = String(sessionId || "").trim();
+  if (!id) throw new Error("Session ID is required");
+  if (!mp3 || typeof mp3 !== "object") throw new Error("MP3 payload required");
+
+  const sessions = await getSessions();
+  const index = sessions.findIndex((item) => item?.id === id);
+  if (index < 0) throw new Error("Session not found");
+
+  sessions[index] = {
+    ...sessions[index],
+    mp3DownloadId: Number.isInteger(mp3.downloadId) ? mp3.downloadId : null,
+    mp3FileName: String(mp3.fileName || "")
+  };
+  const localStorage = globalThis.chrome?.storage?.local;
+  if (!localStorage) {
+    throw new Error("Storage API unavailable in service worker");
+  }
+  await localStorage.set({ [STORAGE_KEYS.SESSIONS]: sessions.slice(0, 300) });
+  return sessions[index];
 }
 
 async function handleOffscreenStatus(payload) {
