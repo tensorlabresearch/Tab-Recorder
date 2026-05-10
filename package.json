@@ -13,6 +13,7 @@
     "@breezystack/lamejs": "^1.2.7",
     "@huggingface/transformers": "^4.2.0",
     "@playwright/test": "^1.59.1",
+    "fake-indexeddb": "^6.2.5",
     "vitest": "^3.0.0"
   }
 }

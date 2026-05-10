@@ -164,7 +164,7 @@ async function walkAndRead(handle, relativePath) {
   return await fileHandle.getFile();
 }
 
-function pathCandidates(handle, sessionFileName) {
+export function pathCandidates(handle, sessionFileName) {
   const original = String(sessionFileName || "");
   if (!original) return [];
   const out = [];

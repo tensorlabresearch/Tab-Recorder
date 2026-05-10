@@ -3,6 +3,7 @@
 // this module just persists the user's chosen variant and reports state.
 
 const MODEL_SETTING_KEY = "whisperModelId";
+const AUTO_TRANSCRIBE_KEY = "autoTranscribeOnStop";
 
 export const WHISPER_MODELS = [
   {
@@ -51,7 +52,7 @@ export async function isModelCached(id) {
   // Transformers.js stores model artifacts in the browser's Cache API under
   // the "transformers-cache" namespace. Any successfully loaded entry for
   // the model id implies a prior download.
-  if (!("caches" in self)) return false;
+  if (!("caches" in globalThis)) return false;
   try {
     const cache = await caches.open("transformers-cache");
     const keys = await cache.keys();
@@ -60,6 +61,19 @@ export async function isModelCached(id) {
   } catch (_) {
     return false;
   }
+}
+
+export async function getAutoTranscribePreference() {
+  try {
+    const result = await chrome.storage.local.get(AUTO_TRANSCRIBE_KEY);
+    return result?.[AUTO_TRANSCRIBE_KEY] === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+export async function setAutoTranscribePreference(enabled) {
+  await chrome.storage.local.set({ [AUTO_TRANSCRIBE_KEY]: !!enabled });
 }
 
 export function formatModelSize(bytes) {

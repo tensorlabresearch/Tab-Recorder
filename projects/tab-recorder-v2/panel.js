@@ -11,7 +11,7 @@ import {
   removeRecordingArtifact,
   readArtifactText
 } from "./lib/audioFs.js";
-import { getSelectedModelId } from "./lib/whisperModel.js";
+import { getSelectedModelId, getAutoTranscribePreference } from "./lib/whisperModel.js";
 import { mergeSessionSources } from "./lib/sessionMerge.js";
 
 const statusEl = document.getElementById("status");
@@ -28,6 +28,7 @@ const monitorToggle = document.getElementById("monitor-toggle");
 const monitorToggleLive = document.getElementById("monitor-toggle-live");
 const startButton = document.getElementById("start-btn");
 const stopButton = document.getElementById("stop-btn");
+const pauseButton = document.getElementById("pause-btn");
 const changeTabButton = document.getElementById("change-tab-btn");
 const openSettingsButton = document.getElementById("open-settings-btn");
 const loadingSplashEl = document.getElementById("loading-splash");
@@ -54,6 +55,8 @@ let analyserBuffer = null;
 let monitorEnabled = true;
 let changeInProgress = false;
 let cachedMicDevices = [];
+let pauseStartedAt = null;
+let totalPausedMs = 0;
 
 let graph = freshGraph();
 
@@ -99,6 +102,11 @@ async function init() {
   });
   stopButton.addEventListener("click", () => {
     onStopRecording().catch((error) => {
+      statusEl.textContent = String(error?.message || error);
+    });
+  });
+  pauseButton?.addEventListener("click", () => {
+    onTogglePause().catch((error) => {
       statusEl.textContent = String(error?.message || error);
     });
   });
@@ -149,7 +157,7 @@ async function init() {
     .catch(() => {});
 
   window.addEventListener("beforeunload", () => {
-    if (mediaRecorder && mediaRecorder.state === "recording") {
+    if (mediaRecorder && (mediaRecorder.state === "recording" || mediaRecorder.state === "paused")) {
       try { mediaRecorder.stop(); } catch (_) {}
     }
   });
@@ -253,6 +261,8 @@ async function onStartRecording() {
   if (mediaRecorder) return;
   startButton.disabled = true;
   statusEl.textContent = "Pick the tab to record...";
+  pauseStartedAt = null;
+  totalPausedMs = 0;
 
   let displayStream;
   try {
@@ -308,17 +318,24 @@ async function onStartRecording() {
     cleanupGraph();
     stopMeters();
     const finishedSession = currentSession;
+    let saveOk = false;
     try {
       const { downloadId } = await saveBlob(blob, finishedSession);
       await persistSessionRecord(finishedSession, downloadId, mimeType);
       statusEl.textContent = `Saved: ${finishedSession.fileName}`;
+      saveOk = true;
     } catch (error) {
       statusEl.textContent = `Save failed: ${error?.message || error}`;
     }
     currentSession = null;
     mediaRecorder = null;
     resetRecordingUI();
-    loadAndRenderSessions().catch(() => {});
+    await loadAndRenderSessions().catch(() => {});
+
+    if (saveOk && finishedSession) {
+      const auto = await getAutoTranscribePreference().catch(() => false);
+      if (auto) triggerAutoTranscribe(finishedSession.id);
+    }
   };
   mediaRecorder.onerror = (event) => {
     statusEl.textContent = `Recorder error: ${event.error?.message || event.error}`;
@@ -532,22 +549,70 @@ function setChanging(on) {
 }
 
 async function onStopRecording() {
-  if (!mediaRecorder || mediaRecorder.state !== "recording") return;
+  if (!mediaRecorder) return;
+  if (mediaRecorder.state !== "recording" && mediaRecorder.state !== "paused") return;
+  // Account for any active pause so durationMs is correct.
+  if (mediaRecorder.state === "paused" && pauseStartedAt != null) {
+    totalPausedMs += Date.now() - pauseStartedAt;
+    pauseStartedAt = null;
+  }
   stopButton.disabled = true;
   stopButton.textContent = "Saving...";
+  if (pauseButton) pauseButton.disabled = true;
   recordingStatusEl.textContent = "Saving recording...";
   mediaRecorder.stop();
+}
+
+async function onTogglePause() {
+  if (!mediaRecorder || !pauseButton) return;
+  if (mediaRecorder.state === "recording") {
+    try { mediaRecorder.pause(); } catch (_) { return; }
+    pauseStartedAt = Date.now();
+    pauseButton.textContent = "Resume";
+    pauseButton.classList.add("is-paused");
+    recordingEl.classList.add("is-paused");
+    if (currentSession) {
+      recordingStatusEl.textContent = `Paused: ${currentSession.meetingLabel}`;
+    }
+    if (elapsedTimerId) {
+      clearInterval(elapsedTimerId);
+      elapsedTimerId = null;
+    }
+    return;
+  }
+  if (mediaRecorder.state === "paused") {
+    if (pauseStartedAt != null) {
+      totalPausedMs += Date.now() - pauseStartedAt;
+      pauseStartedAt = null;
+    }
+    try { mediaRecorder.resume(); } catch (_) { return; }
+    pauseButton.textContent = "Pause";
+    pauseButton.classList.remove("is-paused");
+    recordingEl.classList.remove("is-paused");
+    if (currentSession) {
+      recordingStatusEl.textContent = `Recording: ${currentSession.meetingLabel}`;
+    }
+    startElapsedTimer();
+  }
 }
 
 function resetRecordingUI() {
   preRecordEl.classList.remove("hidden");
   recordingEl.classList.add("hidden");
+  recordingEl.classList.remove("is-paused");
   recordingsSectionEl?.classList.remove("hidden");
   stopButton.disabled = false;
   stopButton.textContent = "Stop Recording";
   startButton.disabled = false;
   changeTabButton.disabled = false;
   micSelectLive.disabled = false;
+  if (pauseButton) {
+    pauseButton.disabled = false;
+    pauseButton.textContent = "Pause";
+    pauseButton.classList.remove("is-paused");
+  }
+  pauseStartedAt = null;
+  totalPausedMs = 0;
   meetingLabelInput.value = defaultTimestampLabel();
   elapsedEl.textContent = "00:00";
   tabLevelEl.style.width = "0%";
@@ -558,8 +623,10 @@ function resetRecordingUI() {
 function startElapsedTimer() {
   const start = currentSession?.startedAt || Date.now();
   const tick = () => {
-    const elapsed = Date.now() - start;
-    elapsedEl.textContent = formatElapsed(elapsed);
+    const now = Date.now();
+    const activePauseMs = pauseStartedAt != null ? now - pauseStartedAt : 0;
+    const elapsed = now - start - totalPausedMs - activePauseMs;
+    elapsedEl.textContent = formatElapsed(Math.max(0, elapsed));
   };
   tick();
   elapsedTimerId = setInterval(tick, 500);
@@ -660,13 +727,17 @@ async function saveBlob(blob, session) {
 
 async function persistSessionRecord(session, downloadId, mimeType) {
   const endedAt = Date.now();
+  // Subtract paused time so duration reflects actual recorded media length,
+  // not wall-clock time.
+  const pausedDuringActive = pauseStartedAt != null ? endedAt - pauseStartedAt : 0;
+  const durationMs = Math.max(0, endedAt - session.startedAt - totalPausedMs - pausedDuringActive);
   const payload = {
     id: session.id,
     meetingLabel: session.meetingLabel,
     tabTitle: session.meetingLabel,
     startedAt: session.startedAt,
     endedAt,
-    durationMs: endedAt - session.startedAt,
+    durationMs,
     fileName: `Tab Recorder/${session.fileName}`,
     downloadId: Number.isInteger(downloadId) ? downloadId : null,
     audioFormat: "webm",
@@ -1034,6 +1105,20 @@ async function onRecordingsListClick(event) {
 
 async function findSession(sessionId) {
   return cachedMergedSessions.find((s) => s?.id === sessionId) || null;
+}
+
+function triggerAutoTranscribe(sessionId) {
+  if (!sessionId || !recordingsListEl) return;
+  // The list re-renders on every save-session; the row should exist by now.
+  const row = recordingsListEl.querySelector(
+    `.recording-item[data-session-id="${CSS.escape(String(sessionId))}"]`
+  );
+  if (!row) return;
+  const btn = row.querySelector('button[data-action="transcribe"]');
+  if (btn && !btn.disabled) {
+    statusEl.textContent = "Auto-transcribing...";
+    btn.click();
+  }
 }
 
 function formatSessionDate(ts) {

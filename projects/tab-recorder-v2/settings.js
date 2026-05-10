@@ -5,7 +5,9 @@ import {
   setSelectedModelId,
   isModelCached,
   findModel,
-  formatModelSize
+  formatModelSize,
+  getAutoTranscribePreference,
+  setAutoTranscribePreference
 } from "./lib/whisperModel.js";
 
 const modelSelect = document.getElementById("model-select");
@@ -31,6 +33,24 @@ async function init() {
   });
 
   await refreshCacheState();
+
+  const autoTranscribeToggle = document.getElementById("auto-transcribe-toggle");
+  if (autoTranscribeToggle) {
+    autoTranscribeToggle.checked = await getAutoTranscribePreference();
+    autoTranscribeToggle.addEventListener("change", async () => {
+      try {
+        await setAutoTranscribePreference(autoTranscribeToggle.checked);
+        showToast(
+          autoTranscribeToggle.checked
+            ? "Auto-transcribe enabled"
+            : "Auto-transcribe disabled",
+          "success"
+        );
+      } catch (error) {
+        showToast(`Error: ${error?.message || error}`, "error");
+      }
+    });
+  }
 
   modelSelect.addEventListener("change", async () => {
     try {

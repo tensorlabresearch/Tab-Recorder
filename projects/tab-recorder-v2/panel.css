@@ -412,6 +412,18 @@ button:disabled {
   }
 }
 
+.recording.is-paused .rec-dot {
+  background: var(--warning);
+  box-shadow: 0 0 12px rgba(240, 176, 63, 0.55);
+  animation: none;
+  opacity: 0.9;
+}
+
+.row-action.is-paused {
+  border-color: rgba(240, 176, 63, 0.45);
+  color: #f0b03f;
+}
+
 .elapsed {
   font-size: 56px;
   font-weight: 700;

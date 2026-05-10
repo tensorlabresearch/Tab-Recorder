@@ -60,6 +60,15 @@
           The model is downloaded from HuggingFace once and cached by the
           browser. Subsequent transcriptions reuse the cache.
         </p>
+
+        <label class="toggle">
+          <input id="auto-transcribe-toggle" type="checkbox" />
+          <span>Auto-transcribe new recordings</span>
+        </label>
+        <p class="help-text">
+          When enabled, transcription kicks off automatically as soon as a
+          recording is stopped. Requires the model to be downloaded first.
+        </p>
       </section>
 
       <section class="card">
