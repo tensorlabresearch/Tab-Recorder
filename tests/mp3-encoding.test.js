@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   encodePcmToMp3,
   floatToInt16
-} from "../projects/tab-recorder-v2/lib/mp3Encoding.js";
+} from "../extension/lib/mp3Encoding.js";
 
 function makeSineFloat32({ frequencyHz, durationSec, sampleRate, amplitude = 0.5 }) {
   const numSamples = Math.floor(sampleRate * durationSec);

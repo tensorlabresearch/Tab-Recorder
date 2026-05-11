@@ -10,7 +10,6 @@
     "desktopCapture",
     "tabs",
     "storage",
-    "offscreen",
     "downloads"
   ],
   "host_permissions": [

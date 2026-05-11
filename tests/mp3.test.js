@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Mp3Encoder } from "../projects/tab-recorder-v2/lib/lamejs/lamejs.js";
+import { Mp3Encoder } from "../extension/lib/lamejs/lamejs.js";
 
 function encodeMonoPcm(pcm, sampleRate, bitrate = 128) {
   const encoder = new Mp3Encoder(1, sampleRate, bitrate);

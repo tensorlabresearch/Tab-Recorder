@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { installChromeStorageMock } from "./helpers/chrome-storage-mock.js";
 import { installCachesMock } from "./helpers/caches-mock.js";
-import * as mod from "../projects/tab-recorder-v2/lib/whisperModel.js";
+import * as mod from "../extension/lib/whisperModel.js";
 
 let chromeMock;
 let cachesMock;

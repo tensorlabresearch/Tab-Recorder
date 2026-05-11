@@ -11,7 +11,7 @@ import {
   debounce,
   parseHtml,
   extractLinks
-} from '../projects/tab-recorder-v2/lib/utils.js';
+} from '../extension/lib/utils.js';
 
 describe('makeId', () => {
   it('returns a string', () => {

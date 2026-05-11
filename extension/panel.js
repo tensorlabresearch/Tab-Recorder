@@ -124,8 +124,20 @@ async function init() {
     refreshMicSelectors().catch(() => {});
   });
 
-  refreshRecordingsButton?.addEventListener("click", () => {
-    loadAndRenderSessions().catch(() => {});
+  refreshRecordingsButton?.addEventListener("click", async () => {
+    refreshRecordingsButton.disabled = true;
+    const originalLabel = refreshRecordingsButton.textContent;
+    refreshRecordingsButton.textContent = "Refreshing...";
+    try {
+      // Force a fresh duration probe by dropping the cache; then re-render
+      // and kick off enrichment which repopulates the cache via the source files.
+      try { await chrome.storage.local.remove("v2DurationCache"); } catch (_) {}
+      await loadAndRenderSessions();
+      enrichDurationsInBackground().catch(() => {});
+    } finally {
+      refreshRecordingsButton.disabled = false;
+      refreshRecordingsButton.textContent = originalLabel;
+    }
   });
 
   pickFolderButton?.addEventListener("click", async () => {
@@ -1420,21 +1432,34 @@ async function transcribeSession(session, button) {
     return;
   }
 
+  console.log("[panel] transcription returned", {
+    device: result.device,
+    textLength: (result.text || "").length,
+    segmentCount: (result.segments || []).length
+  });
+
+  if (!result.text || !result.text.trim()) {
+    statusEl.textContent =
+      "Transcription completed but produced no text. The audio may be silent, " +
+      "the model may not have detected speech, or the engine returned an empty " +
+      "result. Check the [whisperWorker] log for details.";
+    restore();
+    return;
+  }
+
   setRowProgress(row, { label: "Saving", fraction: 0.95 });
   // Write transcript next to the webm so the file lives in the same folder.
-  if (result.text) {
-    try {
-      await writeRecordingArtifact(
-        handle,
-        session.fileName,
-        new Blob([result.text], { type: "text/plain" }),
-        { extension: "txt" }
-      );
-    } catch (error) {
-      statusEl.textContent = `Saving transcript file failed: ${error?.message || error}`;
-      restore();
-      return;
-    }
+  try {
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([result.text], { type: "text/plain" }),
+      { extension: "txt" }
+    );
+  } catch (error) {
+    statusEl.textContent = `Saving transcript file failed: ${error?.message || error}`;
+    restore();
+    return;
   }
 
   const sessionId = await ensureStoredSessionId(session, durationMs);
@@ -1452,7 +1477,7 @@ async function transcribeSession(session, button) {
   }
 
   setRowProgress(row, { label: "Done", fraction: 1 });
-  statusEl.textContent = "Transcript saved.";
+  statusEl.textContent = `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).`;
   await loadAndRenderSessions();
 }
 

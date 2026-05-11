@@ -1,36 +1,134 @@
-![Tab Recorder Logo](projects/tab-recorder-v2/icons/icon128.png)
+# Tab Recorder
 
+![Tab Recorder Logo](extension/icons/icon128.png)
 
-# Tab Recorder (Chrome Extension)
+Audio-only tab + microphone recorder for Chromium browsers. Saves to your local
+Downloads folder, converts to MP3 with [LAME](https://lame.sourceforge.net/) via
+[lamejs](https://github.com/zhuker/lamejs), and transcribes locally with
+[Transformers.js](https://github.com/huggingface/transformers.js) running
+Whisper through ONNX Runtime Web (WebGPU when available, WASM CPU fallback).
 
-Audio-first tab recorder for meetings, with a side-panel workflow, Drive upload, and notes workspace.
+Nothing leaves your machine except the one-time Whisper model download from
+HuggingFace on first transcription. No analytics, no cloud upload, no API keys.
 
-## Install (Developer Mode)
+## Quick start
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked**
-4. Select: `projects/tab-recorder-v2`
-5. Click the extension icon to open the side panel
+Tested on Chrome and Brave. Both are Chromium and use the same MV3 build.
 
-## What You Get
+1. Grab the latest release zip:
+   <https://github.com/tensorlabresearch/Tab-Recorder/releases/latest>
+   (look for `tab-recorder-vX.Y.Z.zip`).
+2. Unzip it to a folder you'll keep around — the browser loads the unpacked
+   directory directly.
+3. Open the extensions page:
+   - Chrome: `chrome://extensions`
+   - Brave:  `brave://extensions`
+4. Enable **Developer mode** (top-right toggle).
+5. Click **Load unpacked** and pick the unzipped folder.
+6. Click the Tab Recorder toolbar icon. The recorder opens in its own tab.
 
-- Record active tab audio to Google Drive
-- Meeting notes while recording
-- Notes workspace with playback + timestamped playback notes
-- Per-session Drive folder with audio + notes markdown
+First transcription downloads the selected Whisper model (~250 MB for the
+default `whisper-small.en`) to your browser's cache. After that it runs offline.
 
-## Repo Layout
+## What it does
 
-- `projects/tab-recorder-v2` -> extension code
+- Records audio from any tab plus an optional microphone, with live level
+  meters and an elapsed timer.
+- Hot-swap the source tab or microphone mid-recording without losing the
+  in-progress file. Pause and resume without finalising.
+- Saves recordings to `~/Downloads/Tab Recorder/<date>/<name>.webm`.
+- Lists every recording in the panel — files Chrome's download history
+  forgot still appear via a recursive scan of the granted folder.
+- Per-row actions: Convert to MP3, Transcribe, Copy Transcript, Delete.
+- MP3 and `.txt` transcript land **next to** the source webm (same folder,
+  same basename).
+- Live transcript preview during transcription; progress bar walks through
+  the recording based on whisper's emitted timestamps.
+- Optional auto-transcribe on stop (Settings).
 
-## Zip For Sharing
+## Settings
 
-Use the instructions in:
+Open Settings from the panel:
 
-- `projects/tab-recorder-v2/SETUP.md`
+- **Recordings folder**: status only. Files go to `~/Downloads/Tab Recorder/`
+  via the browser's Downloads behaviour.
+- **Whisper model**: choose between tiny.en (~40 MB), base.en (~80 MB),
+  small.en (~250 MB, default), or base multilingual.
+- **Engine**: shows whether WebGPU is usable on this machine. WASM CPU is
+  the automatic fallback.
+- **Download / Warm Up Model**: pre-fetches the selected model so the first
+  Transcribe click doesn't have to wait on the download.
+- **Clear Model Cache**: deletes the cached model files.
+- **Auto-transcribe new recordings**: when on, transcription starts the
+  moment a recording stops.
 
-## Quick Troubleshooting
+## Development
 
-- If changes do not appear: go to `chrome://extensions` and click **Reload** on Tab Recorder.
-- If panel opens stale: close/reopen side panel after reload.
+```sh
+git clone git@github.com:tensorlabresearch/Tab-Recorder.git
+cd Tab-Recorder
+npm ci
+npm test
+```
+
+To load the in-tree extension (no build step needed):
+
+- `chrome://extensions` -> Developer mode -> Load unpacked
+- Select `extension/`
+
+After updates, click **Reload** on the extension card.
+
+### Vendored dependencies
+
+The Transformers.js bundle and ONNX Runtime Web WASM artifacts are vendored at
+`extension/lib/transformersJs/` because MV3 forbids
+remote-hosted scripts/wasm. Re-vendor them after a dependency bump:
+
+```sh
+npm run vendor:transformers
+```
+
+### Tests
+
+```sh
+npm test               # vitest, all unit tests
+```
+
+GitHub Actions runs the same suite on every push and pull request to `main`
+(`.github/workflows/ci.yml`).
+
+## Releases
+
+Releases are produced automatically from `main`. Every push to `main` triggers
+`.github/workflows/auto-release.yml` which:
+
+1. Runs the test suite.
+2. Reads commit messages since the last tag.
+3. Picks a SemVer bump (`feat:` -> minor, breaking change -> major, anything
+   else -> patch).
+4. Updates `package.json` and `extension/manifest.json`.
+5. Commits, tags `vX.Y.Z`, builds `tab-recorder-vX.Y.Z.zip`, and publishes a
+   GitHub Release with auto-generated notes.
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
+`fix:`, `chore:`, etc.) for the bump heuristic to behave correctly. Mark
+breaking changes with `feat!:` or a `BREAKING CHANGE:` footer to force a major
+bump.
+
+## Repo layout
+
+```
+Tab-Recorder/
+├── .github/workflows/   - CI, auto-release
+├── extension/  - extension source (manifest, panel, settings, lib)
+├── scripts/             - vendor + maintenance scripts
+├── tests/               - vitest unit tests + helpers
+└── tools/               - standalone power-user utilities (optional)
+```
+
+## License
+
+Project code under the MIT license. Vendored runtimes carry their own
+licenses (LAME / lamejs LGPL-3.0; Transformers.js Apache-2.0;
+ONNX Runtime Web MIT) preserved next to the bundles in
+`extension/lib/`.

@@ -21,7 +21,7 @@ afterEach(() => {
 // Re-import audioFs each test so its module-level cachedHandle starts fresh.
 async function loadAudioFs() {
   // Vite/vitest caches modules; reset before each suite to drop cachedHandle.
-  return await import("../projects/tab-recorder-v2/lib/audioFs.js");
+  return await import("../extension/lib/audioFs.js");
 }
 
 describe("pathCandidates (pure)", () => {

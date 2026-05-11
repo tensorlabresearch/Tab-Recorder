@@ -1,0 +1,115 @@
+name: Auto Release
+
+# On every push to main, parse commits since the last tag, decide whether to
+# bump patch/minor/major, update package.json + manifest.json, commit and
+# tag, build the extension zip, and publish a GitHub Release.
+#
+# Conventional Commits subset used to pick the bump type:
+#   feat!:  / fix!: / chore!: / "BREAKING CHANGE" in body  -> major
+#   feat:  / feat(scope):                                   -> minor
+#   anything else (fix:, chore:, docs:, refactor:, ...)     -> patch
+#
+# Skips itself on the bump commit it just authored ("chore(release):").
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Determine bump type
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            RANGE="${LAST_TAG}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+          COMMITS=$(git log "$RANGE" --pretty=format:'%s%n%b%n----')
+
+          BUMP="patch"
+          if printf '%s' "$COMMITS" | grep -qE '^[a-zA-Z]+(\([^)]*\))?!:|^BREAKING CHANGE'; then
+            BUMP="major"
+          elif printf '%s' "$COMMITS" | grep -qE '^feat(\([^)]*\))?:'; then
+            BUMP="minor"
+          fi
+
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Bump decision: $BUMP (range ${RANGE})"
+
+      - name: Bump package.json + manifest.json
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm version "${{ steps.bump.outputs.bump }}" --no-git-tag-version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+
+          node <<JS
+          const fs = require('fs');
+          const path = 'extension/manifest.json';
+          const m = JSON.parse(fs.readFileSync(path, 'utf8'));
+          m.version = '$NEW_VERSION';
+          fs.writeFileSync(path, JSON.stringify(m, null, 2) + '\n');
+          JS
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "New version: $NEW_VERSION"
+
+      - name: Commit and tag
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json extension/manifest.json
+          git commit -m "chore(release): v${NEW_VERSION}"
+          git tag "v${NEW_VERSION}"
+          git push origin main --follow-tags
+
+      - name: Package extension
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd extension
+          ZIP="../tab-recorder-v${NEW_VERSION}.zip"
+          zip -r "$ZIP" . \
+            -x 'node_modules/*' \
+            -x '.DS_Store' \
+            -x '*.md'
+          ls -lh "$ZIP"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          files: tab-recorder-v${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true

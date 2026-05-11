@@ -145,6 +145,17 @@ self.onmessage = async (event) => {
           ? out.text.trim()
           : finalSegments.map((s) => s.text).join(" ").trim();
 
+      console.log("[whisperWorker] transcription complete", {
+        device: activeDevice,
+        textLength: finalText.length,
+        segmentCount: finalSegments.length,
+        rawHasText: typeof out?.text === "string",
+        rawHasChunks: Array.isArray(out?.chunks),
+        pcmSamples: audio.length,
+        firstSegment: finalSegments[0],
+        rawOutPreview: out && Object.keys(out).slice(0, 8)
+      });
+
       self.postMessage({
         type: "done",
         jobId,

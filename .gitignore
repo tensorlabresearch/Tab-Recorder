@@ -6,4 +6,5 @@ coverage/
 .runtime/
 .wasm-build/
 .claude/
+.opencode/
 CLAUDE.md

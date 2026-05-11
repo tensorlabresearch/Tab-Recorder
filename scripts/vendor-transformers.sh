@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copies the Transformers.js + onnxruntime-web artifacts the extension needs
-# from node_modules/ into projects/tab-recorder-v2/lib/transformersJs/.
+# from node_modules/ into extension/lib/transformersJs/.
 #
 # Patches transformers.web.min.js to replace the bare specifier
 # `onnxruntime-web/webgpu` (which browsers can't resolve) with a relative
@@ -15,7 +15,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_TRANSFORMERS="$REPO_ROOT/node_modules/@huggingface/transformers/dist"
 SRC_ORT="$REPO_ROOT/node_modules/onnxruntime-web/dist"
 SRC_ORT_COMMON="$REPO_ROOT/node_modules/onnxruntime-common/dist/esm"
-DEST="$REPO_ROOT/projects/tab-recorder-v2/lib/transformersJs"
+DEST="$REPO_ROOT/extension/lib/transformersJs"
 
 if [ ! -d "$SRC_TRANSFORMERS" ]; then
   echo "[vendor-transformers] @huggingface/transformers not installed; run npm install first." >&2

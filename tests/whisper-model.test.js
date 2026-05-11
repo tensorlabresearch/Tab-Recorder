@@ -4,7 +4,7 @@ import {
   DEFAULT_WHISPER_MODEL_ID,
   findModel,
   formatModelSize
-} from "../projects/tab-recorder-v2/lib/whisperModel.js";
+} from "../extension/lib/whisperModel.js";
 
 describe("WHISPER_MODELS registry", () => {
   it("is a non-empty array", () => {

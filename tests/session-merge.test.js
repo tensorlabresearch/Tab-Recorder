@@ -3,7 +3,7 @@ import {
   pathKey,
   synthesizeSessionFromFs,
   mergeSessionSources
-} from "../projects/tab-recorder-v2/lib/sessionMerge.js";
+} from "../extension/lib/sessionMerge.js";
 
 describe("pathKey", () => {
   it("returns null for missing input", () => {

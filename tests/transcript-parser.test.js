@@ -5,7 +5,7 @@ import {
   parseSegmentLine,
   isFinishLine,
   parseTranscript
-} from "../projects/tab-recorder-v2/lib/transcriptParser.js";
+} from "../extension/lib/transcriptParser.js";
 
 describe("parseTimestampMs", () => {
   it("returns 0 for empty / invalid input", () => {

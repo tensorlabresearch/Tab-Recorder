@@ -5,7 +5,7 @@ import {
   generateTranscriptFileName,
   getSupportedAudioFormats,
   getSupportedTranscriptFormats
-} from "../projects/tab-recorder-v2/lib/fileStorage.js";
+} from "../extension/lib/fileStorage.js";
 
 const FIXED_TIMESTAMP = new Date("2026-05-08T15:30:00Z").getTime();
 

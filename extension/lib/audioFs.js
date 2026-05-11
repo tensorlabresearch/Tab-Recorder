@@ -77,7 +77,17 @@ export async function ensureWritable(handle) {
 }
 
 export async function pickRecordingsDirectory() {
-  if (!("showDirectoryPicker" in window)) {
+  if (typeof window === "undefined" || !("showDirectoryPicker" in window)) {
+    const isBrave =
+      typeof navigator !== "undefined" &&
+      typeof navigator.brave?.isBrave === "function";
+    if (isBrave) {
+      throw new Error(
+        "File System Access API is disabled in Brave by default. " +
+          "Open brave://flags/#file-system-access-api, set it to Enabled, " +
+          "relaunch Brave, then re-open Tab Recorder and try Pick Folder again."
+      );
+    }
     throw new Error("File System Access API not available in this browser.");
   }
   const handle = await window.showDirectoryPicker({
@@ -333,6 +343,31 @@ export async function readArtifactText(handle, fullPath) {
 
 export async function probeAudioDuration(file) {
   if (!file) throw new Error("File required");
+
+  // Decode via Web Audio. This is the same code path MP3 conversion uses,
+  // so durations stay consistent across the lifecycle (and we sidestep the
+  // MediaRecorder-webm/opus duration metadata bug that makes <audio>.duration
+  // return Infinity until you seek past the end).
+  if (typeof AudioContext === "function") {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const ctx = new AudioContext();
+      try {
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        const seconds = Number(audioBuffer.duration);
+        if (Number.isFinite(seconds) && seconds > 0) {
+          return Math.round(seconds * 1000);
+        }
+      } finally {
+        ctx.close().catch(() => {});
+      }
+    } catch (_) {
+      // Fall through to the <audio>-element fallback below.
+    }
+  }
+
+  // Fallback: <audio> with the seek-to-end trick. Cheaper but flaky for
+  // some MediaRecorder outputs.
   return await new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const audio = document.createElement("audio");
@@ -360,8 +395,6 @@ export async function probeAudioDuration(file) {
         finish(Math.round(seconds * 1000));
         return;
       }
-      // Chromium reports Infinity for the duration of webm/opus produced by MediaRecorder
-      // until the playhead is forced past the end; the real duration is then exposed.
       audio.ontimeupdate = () => {
         audio.ontimeupdate = null;
         const real = Number(audio.duration);
