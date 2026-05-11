@@ -5,6 +5,7 @@ import {
   probeAudioDuration,
   setCachedDuration,
   getDurationCache,
+  clearRuntimeDurationCache,
   ensureWritable,
   enumerateRecordings,
   writeRecordingArtifact,
@@ -24,8 +25,6 @@ const recordingEl = document.getElementById("recording");
 const meetingLabelInput = document.getElementById("meeting-label");
 const micSelect = document.getElementById("mic-select");
 const micSelectLive = document.getElementById("mic-select-live");
-const monitorToggle = document.getElementById("monitor-toggle");
-const monitorToggleLive = document.getElementById("monitor-toggle-live");
 const startButton = document.getElementById("start-btn");
 const stopButton = document.getElementById("stop-btn");
 const pauseButton = document.getElementById("pause-btn");
@@ -35,11 +34,11 @@ const loadingSplashEl = document.getElementById("loading-splash");
 const recordingsSectionEl = document.getElementById("recordings-section");
 const recordingsListEl = document.getElementById("recordings-list");
 const refreshRecordingsButton = document.getElementById("refresh-recordings-btn");
+const openFolderButton = document.getElementById("open-folder-btn");
 const folderNameEl = document.getElementById("folder-name");
 const pickFolderButton = document.getElementById("pick-folder-btn");
 
 const MIC_DEVICE_ID_KEY = "selectedMicDeviceId";
-const MONITOR_KEY = "monitorTabAudio";
 const NO_MIC_VALUE = "__none__";
 
 const MIC_GAIN = 2.0;
@@ -52,7 +51,6 @@ let currentSession = null;
 let elapsedTimerId = null;
 let levelRafId = null;
 let analyserBuffer = null;
-let monitorEnabled = true;
 let changeInProgress = false;
 let cachedMicDevices = [];
 let pauseStartedAt = null;
@@ -64,7 +62,6 @@ function freshGraph() {
   return {
     context: null,
     recordDestination: null,
-    monitorGain: null,
     tab: emptyNodeGroup(),
     mic: emptyNodeGroup()
   };
@@ -81,18 +78,13 @@ async function init() {
     meetingLabelInput.value = defaultTimestampLabel();
   }
 
-  const stored = await chrome.storage.local.get([MIC_DEVICE_ID_KEY, MONITOR_KEY]).catch(() => ({}));
-  monitorEnabled = stored?.[MONITOR_KEY] !== false;
-  monitorToggle.checked = monitorEnabled;
-  monitorToggleLive.checked = monitorEnabled;
+  const stored = await chrome.storage.local.get([MIC_DEVICE_ID_KEY]).catch(() => ({}));
 
   await populateMicSelectors(stored?.[MIC_DEVICE_ID_KEY]);
   hideLoadingSplash();
 
   micSelect.addEventListener("change", () => onMicSelectChange(micSelect.value));
   micSelectLive.addEventListener("change", () => onMicSelectChange(micSelectLive.value));
-  monitorToggle.addEventListener("change", () => onMonitorToggle(monitorToggle.checked));
-  monitorToggleLive.addEventListener("change", () => onMonitorToggle(monitorToggleLive.checked));
 
   startButton.addEventListener("click", () => {
     onStartRecording().catch((error) => {
@@ -129,15 +121,19 @@ async function init() {
     const originalLabel = refreshRecordingsButton.textContent;
     refreshRecordingsButton.textContent = "Refreshing...";
     try {
-      // Force a fresh duration probe by dropping the cache; then re-render
-      // and kick off enrichment which repopulates the cache via the source files.
-      try { await chrome.storage.local.remove("v2DurationCache"); } catch (_) {}
+      // Drop the runtime-only duration cache so every file is re-probed
+      // from disk, then re-render and run a fresh enrichment pass.
+      clearRuntimeDurationCache();
       await loadAndRenderSessions();
       enrichDurationsInBackground().catch(() => {});
     } finally {
       refreshRecordingsButton.disabled = false;
       refreshRecordingsButton.textContent = originalLabel;
     }
+  });
+
+  openFolderButton?.addEventListener("click", async () => {
+    await openRecordingsFolder();
   });
 
   pickFolderButton?.addEventListener("click", async () => {
@@ -159,7 +155,17 @@ async function init() {
   recordingsListEl?.addEventListener("click", onRecordingsListClick);
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && (changes.v2Sessions || changes.v2DurationCache)) {
+    // Only the session record store now triggers re-renders; the duration
+    // cache has been retired in favor of always re-scanning disk.
+    if (area === "local" && changes.v2Sessions) {
+      if (operationsInFlight > 0) {
+        // Don't tear down the row while a transcribe / MP3 conversion is
+        // running on it — that would destroy the spinner, the button's
+        // disabled state, and the live transcript preview. Defer until the
+        // operation finishes; endOperation() runs the reload then.
+        deferredReload = true;
+        return;
+      }
       loadAndRenderSessions().catch(() => {});
     }
   });
@@ -253,20 +259,6 @@ async function onMicSelectChange(newValue) {
     }
     await swapMic(newValue);
   }
-}
-
-function onMonitorToggle(enabled) {
-  monitorEnabled = enabled;
-  if (monitorToggle.checked !== enabled) monitorToggle.checked = enabled;
-  if (monitorToggleLive.checked !== enabled) monitorToggleLive.checked = enabled;
-  chrome.storage.local.set({ [MONITOR_KEY]: enabled }).catch(() => {});
-  applyMonitorSetting();
-}
-
-function applyMonitorSetting() {
-  if (!graph.monitorGain || !graph.context) return;
-  const target = monitorEnabled ? 1.0 : 0.0;
-  rampGain(graph.monitorGain, target, FADE_SECONDS);
 }
 
 async function onStartRecording() {
@@ -373,8 +365,8 @@ async function onStartRecording() {
 }
 
 async function acquireMicStream(deviceId) {
-  // Echo cancellation matters when tab audio is monitored through speakers
-  // (the mic would otherwise re-capture it). Noise suppression also helps.
+  // Echo cancellation + noise suppression cleans up room reverb and any
+  // ambient noise picked up by the mic.
   const audioConstraints = {
     echoCancellation: true,
     noiseSuppression: true,
@@ -393,9 +385,9 @@ function initGraph() {
   graph = freshGraph();
   graph.context = new AudioContext();
   graph.recordDestination = graph.context.createMediaStreamDestination();
-  graph.monitorGain = graph.context.createGain();
-  graph.monitorGain.gain.value = monitorEnabled ? 1.0 : 0.0;
-  graph.monitorGain.connect(graph.context.destination);
+  // Note: tab + mic audio are routed only into recordDestination, never to
+  // graph.context.destination. Nothing plays back through the user's
+  // speakers while recording.
 }
 
 function attachTabStream(stream) {
@@ -405,7 +397,6 @@ function attachTabStream(stream) {
   gain.gain.value = 0;
   source.connect(gain);
   gain.connect(graph.recordDestination);
-  gain.connect(graph.monitorGain);
 
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
@@ -806,6 +797,27 @@ function sleep(ms) {
 
 let cachedMergedSessions = [];
 
+// Operations currently in flight (transcribe, MP3 convert). Tracked by the
+// session's fileName because that's stable even when a synthesized session
+// gets promoted to a stored one mid-operation.
+const inProgressFileNames = new Set();
+let operationsInFlight = 0;
+let deferredReload = false;
+
+function startOperation(fileName) {
+  if (fileName) inProgressFileNames.add(fileName);
+  operationsInFlight += 1;
+}
+
+function endOperation(fileName) {
+  if (fileName) inProgressFileNames.delete(fileName);
+  operationsInFlight = Math.max(0, operationsInFlight - 1);
+  if (operationsInFlight === 0 && deferredReload) {
+    deferredReload = false;
+    loadAndRenderSessions().catch(() => {});
+  }
+}
+
 function formatWorkerErrorEvent(event) {
   if (!event) return "";
   const parts = [];
@@ -828,6 +840,16 @@ async function loadAndRenderSessions() {
   ]);
 
   cachedMergedSessions = mergeSessionSources(stored, downloadOrphans, fsFiles);
+
+  // Apply the runtime-only duration cache so rows that were probed earlier
+  // in this panel session show their duration immediately without
+  // re-decoding. The cache lives only in memory; restart wipes it.
+  const durations = getDurationCache();
+  for (const session of cachedMergedSessions) {
+    if (Number(session.durationMs) > 0) continue;
+    const cached = durations[session.fileName];
+    if (cached) session.durationMs = cached;
+  }
 
   if (cachedMergedSessions.length === 0) {
     recordingsListEl.innerHTML = "";
@@ -895,12 +917,17 @@ function renderSessionRow(session) {
   const dateLabel = formatSessionDate(session.startedAt);
   if (dateLabel) metaParts.push(dateLabel);
   if (Number(session.durationMs) > 0) metaParts.push(formatDurationHuman(session.durationMs));
-  if (session.transcriptText || session._fsTxtPath) metaParts.push("transcribed");
-  if (session.mp3FileName) metaParts.push("MP3 saved");
   metaParts.forEach((part, idx) => {
     if (idx > 0) meta.appendChild(makeDot());
     meta.appendChild(textNode(part));
   });
+
+  const badges = makeBadgesForSession(session);
+  if (badges) {
+    if (metaParts.length > 0) meta.appendChild(makeDot());
+    meta.appendChild(badges);
+  }
+
   top.appendChild(meta);
 
   row.appendChild(top);
@@ -908,13 +935,20 @@ function renderSessionRow(session) {
   const actions = document.createElement("div");
   actions.className = "recording-item-actions";
 
+  const isInProgress = inProgressFileNames.has(session.fileName);
+  if (isInProgress) row.classList.add("is-working");
+
   const hasTranscript = !!(session.transcriptText || session._fsTxtPath);
   if (!hasTranscript) {
     const transcribeBtn = document.createElement("button");
     transcribeBtn.type = "button";
     transcribeBtn.className = "row-action";
     transcribeBtn.dataset.action = "transcribe";
-    transcribeBtn.textContent = "Transcribe";
+    transcribeBtn.textContent = isInProgress ? "Working..." : "Transcribe";
+    if (isInProgress) {
+      transcribeBtn.disabled = true;
+      transcribeBtn.title = "An operation is already running on this recording.";
+    }
     actions.appendChild(transcribeBtn);
   }
 
@@ -923,7 +957,11 @@ function renderSessionRow(session) {
     mp3Btn.type = "button";
     mp3Btn.className = "row-action";
     mp3Btn.dataset.action = "convert-mp3";
-    mp3Btn.textContent = "Convert to MP3";
+    mp3Btn.textContent = isInProgress ? "Working..." : "Convert to MP3";
+    if (isInProgress) {
+      mp3Btn.disabled = true;
+      mp3Btn.title = "An operation is already running on this recording.";
+    }
     actions.appendChild(mp3Btn);
   }
 
@@ -941,6 +979,10 @@ function renderSessionRow(session) {
   deleteBtn.className = "row-action is-danger";
   deleteBtn.dataset.action = "delete";
   deleteBtn.textContent = "Delete";
+  if (isInProgress) {
+    deleteBtn.disabled = true;
+    deleteBtn.title = "An operation is already running on this recording.";
+  }
   actions.appendChild(deleteBtn);
 
   row.appendChild(actions);
@@ -950,6 +992,10 @@ function renderSessionRow(session) {
   progress.dataset.role = "progress";
   const labelRow = document.createElement("div");
   labelRow.className = "progress-label";
+  const spinner = document.createElement("span");
+  spinner.className = "progress-spinner";
+  spinner.dataset.role = "progress-spinner";
+  spinner.setAttribute("aria-hidden", "true");
   const labelText = document.createElement("span");
   labelText.dataset.role = "progress-label";
   labelText.textContent = "Working";
@@ -957,6 +1003,7 @@ function renderSessionRow(session) {
   percentText.className = "progress-percent";
   percentText.dataset.role = "progress-percent";
   percentText.textContent = "0%";
+  labelRow.appendChild(spinner);
   labelRow.appendChild(labelText);
   labelRow.appendChild(percentText);
   const bar = document.createElement("div");
@@ -974,6 +1021,15 @@ function renderSessionRow(session) {
   progress.appendChild(liveTranscript);
 
   row.appendChild(progress);
+
+  if (isInProgress) {
+    // If this row was rebuilt mid-operation (e.g., user clicked Refresh while
+    // a transcription was running), surface the spinner so they can see work
+    // is still happening. The stage label is generic here since we no longer
+    // hold the original setRowProgress timeline; the row's transcript preview
+    // remains the live indicator of actual transcription progress.
+    setRowProgress(row, { label: "Working in background...", spinner: true });
+  }
 
   return row;
 }
@@ -1012,15 +1068,18 @@ function formatStamp(ms) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function setRowProgress(row, { label, fraction, visible } = {}) {
+function setRowProgress(row, { label, fraction, visible, spinner } = {}) {
   if (!row) return;
   const progress = row.querySelector('[data-role="progress"]');
   if (!progress) return;
   if (visible === false) {
     progress.classList.add("hidden");
+    progress.classList.remove("is-spinner");
     return;
   }
   progress.classList.remove("hidden");
+  if (spinner === true) progress.classList.add("is-spinner");
+  if (spinner === false) progress.classList.remove("is-spinner");
   if (label !== undefined) {
     const el = progress.querySelector('[data-role="progress-label"]');
     if (el) el.textContent = String(label);
@@ -1042,6 +1101,45 @@ function makeDot() {
   const dot = document.createElement("span");
   dot.className = "dot";
   return dot;
+}
+
+const BADGE_ICONS = {
+  // Document with text lines — represents a saved transcript.
+  transcript:
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+    '<polyline points="14 2 14 8 20 8"/>' +
+    '<line x1="16" y1="13" x2="8" y2="13"/>' +
+    '<line x1="16" y1="17" x2="8" y2="17"/>' +
+    '<line x1="10" y1="9" x2="8" y2="9"/>' +
+    "</svg>",
+  // Music note — represents an MP3 sidecar.
+  mp3:
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M9 18V5l12-2v13"/>' +
+    '<circle cx="6" cy="18" r="3"/>' +
+    '<circle cx="18" cy="16" r="3"/>' +
+    "</svg>"
+};
+
+function makeBadge(kind, label) {
+  const span = document.createElement("span");
+  span.className = `recording-badge recording-badge-${kind}`;
+  span.title = label;
+  span.setAttribute("aria-label", label);
+  span.innerHTML = BADGE_ICONS[kind] || "";
+  return span;
+}
+
+function makeBadgesForSession(session) {
+  const hasTranscript = !!(session.transcriptText || session._fsTxtPath);
+  const hasMp3 = !!session.mp3FileName;
+  if (!hasTranscript && !hasMp3) return null;
+  const wrap = document.createElement("span");
+  wrap.className = "recording-badges";
+  if (hasTranscript) wrap.appendChild(makeBadge("transcript", "Transcript saved"));
+  if (hasMp3) wrap.appendChild(makeBadge("mp3", "MP3 saved"));
+  return wrap;
 }
 
 async function onRecordingsListClick(event) {
@@ -1181,6 +1279,15 @@ async function ensureRecordingsHandle({ writable = false } = {}) {
 }
 
 async function convertSessionToMp3(session, button) {
+  startOperation(session?.fileName);
+  try {
+    await convertSessionToMp3Impl(session, button);
+  } finally {
+    endOperation(session?.fileName);
+  }
+}
+
+async function convertSessionToMp3Impl(session, button) {
   const row = button.closest(".recording-item");
 
   let handle;
@@ -1227,7 +1334,7 @@ async function convertSessionToMp3(session, button) {
   }
 
   const durationMs = Math.round(audioBuffer.duration * 1000);
-  setCachedDuration(session.fileName, durationMs).catch(() => {});
+  setCachedDuration(session.fileName, durationMs);
 
   const left = audioBuffer.getChannelData(0);
   const right = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
@@ -1346,6 +1453,15 @@ function encodeMp3InWorker(left, right, sampleRate, onProgress) {
 }
 
 async function transcribeSession(session, button) {
+  startOperation(session?.fileName);
+  try {
+    await transcribeSessionImpl(session, button);
+  } finally {
+    endOperation(session?.fileName);
+  }
+}
+
+async function transcribeSessionImpl(session, button) {
   const row = button.closest(".recording-item");
 
   let handle;
@@ -1368,7 +1484,9 @@ async function transcribeSession(session, button) {
   button.textContent = "Working...";
   statusEl.textContent = "";
 
-  setRowProgress(row, { label: "Reading", fraction: 0 });
+  // Transcription has no truthful percentage — switch the row's progress
+  // element into spinner mode for the entire whisper run.
+  setRowProgress(row, { label: "Reading audio file", spinner: true });
   clearTranscriptPreview(row);
 
   let file;
@@ -1380,7 +1498,7 @@ async function transcribeSession(session, button) {
     return;
   }
 
-  setRowProgress(row, { label: "Decoding", fraction: 0.1 });
+  setRowProgress(row, { label: "Decoding audio" });
   let pcm16k;
   let durationMs;
   try {
@@ -1389,7 +1507,7 @@ async function transcribeSession(session, button) {
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
     audioCtx.close();
     durationMs = Math.round(audioBuffer.duration * 1000);
-    setCachedDuration(session.fileName, durationMs).catch(() => {});
+    setCachedDuration(session.fileName, durationMs);
     pcm16k = await resampleToMono16k(audioBuffer);
   } catch (error) {
     statusEl.textContent = `Decode failed: ${error?.message || error}`;
@@ -1397,8 +1515,7 @@ async function transcribeSession(session, button) {
     return;
   }
 
-  setRowProgress(row, { label: "Loading model", fraction: 0.2 });
-  const totalMs = Math.max(1, Number(durationMs) || 1);
+  setRowProgress(row, { label: "Loading transcription model" });
   const modelId = await getSelectedModelId();
 
   let result;
@@ -1406,22 +1523,20 @@ async function transcribeSession(session, button) {
     result = await runWhisperWorker(pcm16k, {
       modelId,
       onStage: (stage) => setRowProgress(row, { label: stage }),
-      onDownloadProgress: ({ progress }) => {
-        // Map model download progress onto 20-30% so we leave room for transcribe.
-        const fraction = 0.2 + (Number(progress) || 0) / 100 * 0.1;
-        setRowProgress(row, { label: "Loading model", fraction });
+      onDownloadProgress: ({ file: fileName, loaded, total, progress }) => {
+        const pct = Number(progress) || (total ? Math.round((loaded / total) * 100) : 0);
+        const label = fileName
+          ? `Downloading ${fileName} (${pct}%)`
+          : `Downloading model (${pct}%)`;
+        setRowProgress(row, { label });
       },
       onEngine: (device) => {
         setRowProgress(row, {
-          label: device === "webgpu" ? "Transcribing (WebGPU)" : "Transcribing (CPU)",
-          fraction: 0.3
+          label: device === "webgpu" ? "Transcribing on WebGPU" : "Transcribing on CPU"
         });
       },
       onSegment: (segment) => {
         appendTranscriptSegment(row, segment);
-        const segEnd = Number(segment.end != null ? segment.end : segment.start);
-        const segFraction = Math.min(1, Math.max(0, segEnd / totalMs));
-        setRowProgress(row, { fraction: 0.3 + segFraction * 0.65 });
       }
     });
   } catch (error) {
@@ -1447,7 +1562,7 @@ async function transcribeSession(session, button) {
     return;
   }
 
-  setRowProgress(row, { label: "Saving", fraction: 0.95 });
+  setRowProgress(row, { label: "Saving transcript" });
   // Write transcript next to the webm so the file lives in the same folder.
   try {
     await writeRecordingArtifact(
@@ -1476,7 +1591,7 @@ async function transcribeSession(session, button) {
     }
   }
 
-  setRowProgress(row, { label: "Done", fraction: 1 });
+  setRowProgress(row, { label: "Done", spinner: false });
   statusEl.textContent = `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).`;
   await loadAndRenderSessions();
 }
@@ -1601,6 +1716,30 @@ function runWhisperWorker(pcm16k, { modelId, onSegment, onStage, onEngine, onDow
   });
 }
 
+async function openRecordingsFolder() {
+  // chrome.downloads.show(id) opens the OS file manager focused on a download.
+  // We prefer to show the most-recent Tab Recorder webm so the user lands
+  // inside `~/Downloads/Tab Recorder/<date>/`. If no Tab Recorder downloads
+  // are tracked yet, fall back to the default Downloads folder.
+  try {
+    const matches = await chrome.downloads
+      .search({
+        filenameRegex: "Tab Recorder.*\\.webm$",
+        orderBy: ["-startTime"],
+        limit: 1,
+        exists: true
+      })
+      .catch(() => []);
+    if (Array.isArray(matches) && matches.length > 0) {
+      chrome.downloads.show(matches[0].id);
+      return;
+    }
+    chrome.downloads.showDefaultFolder();
+  } catch (error) {
+    statusEl.textContent = `Could not open folder: ${error?.message || error}`;
+  }
+}
+
 async function updateFolderStatus(handleArg) {
   if (!folderNameEl) return;
   let handle = handleArg ?? null;
@@ -1626,15 +1765,11 @@ async function enrichDurationsInBackground() {
   try {
     const handle = await getRecordingsDirectoryHandle();
     if (!handle) return;
-    const cache = await getDurationCache();
-    let response;
-    try {
-      response = await chrome.runtime.sendMessage({ type: "get-sessions" });
-    } catch (_) {
-      return;
-    }
-    if (!response?.ok) return;
-    const sessions = response.sessions || [];
+    // Runtime-only cache; consulted to avoid re-probing the same file
+    // multiple times within a single panel session. Cleared on Refresh
+    // and rebuilt from scratch on every panel open.
+    const cache = getDurationCache();
+    const sessions = cachedMergedSessions;
     let updated = false;
     for (const session of sessions) {
       if (!session?.fileName) continue;
@@ -1644,8 +1779,7 @@ async function enrichDurationsInBackground() {
         const file = await readRecordingFile(handle, session.fileName);
         const ms = await probeAudioDuration(file);
         if (ms > 0) {
-          await setCachedDuration(session.fileName, ms);
-          cache[session.fileName] = ms;
+          setCachedDuration(session.fileName, ms);
           updated = true;
         }
       } catch (_) {

@@ -212,7 +212,6 @@ async function deleteSession(sessionId) {
 }
 
 async function getOrphanDownloads() {
-  const localStorage = globalThis.chrome?.storage?.local;
   const stored = await getSessions();
   let downloads = [];
   try {
@@ -225,31 +224,16 @@ async function getOrphanDownloads() {
     downloads = [];
   }
 
-  let durationCache = {};
-  if (localStorage) {
-    try {
-      const result = await localStorage.get("v2DurationCache");
-      durationCache = result?.v2DurationCache || {};
-    } catch (_) {
-      durationCache = {};
-    }
-  }
-
   const knownDownloadIds = new Set(
     stored.map((s) => s?.downloadId).filter(Number.isInteger)
   );
 
+  // Synthesized rows always come back with durationMs = 0; the panel side
+  // probes the disk and fills the duration in. We don't persist a cache.
   return downloads
     .filter((it) => it && it.state === "complete" && it.exists !== false)
     .filter((it) => !knownDownloadIds.has(it.id))
-    .map((download) => {
-      const session = synthesizeSessionFromDownload(download);
-      const cached = Number(durationCache[session.fileName]);
-      if (Number.isFinite(cached) && cached > 0) {
-        session.durationMs = cached;
-      }
-      return session;
-    });
+    .map(synthesizeSessionFromDownload);
 }
 
 function synthesizeSessionFromDownload(download) {

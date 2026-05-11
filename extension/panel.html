@@ -32,10 +32,6 @@
             <label class="label" for="mic-select">Microphone</label>
             <select id="mic-select"></select>
           </div>
-          <label class="checkbox-row">
-            <input id="monitor-toggle" type="checkbox" />
-            <span>Play tab audio through speakers</span>
-          </label>
           <div class="folder-status">
             <div class="folder-status-text">
               <span class="folder-status-label">Recordings folder</span>
@@ -78,10 +74,6 @@
             <label class="label" for="mic-select-live">Microphone</label>
             <select id="mic-select-live"></select>
           </div>
-          <label class="checkbox-row">
-            <input id="monitor-toggle-live" type="checkbox" />
-            <span>Play tab audio through speakers</span>
-          </label>
         </div>
 
         <div class="actions">
@@ -94,7 +86,10 @@
       <section id="recordings-section" class="recordings-section">
         <div class="recordings-header">
           <h2 class="recordings-title">Recordings</h2>
-          <button id="refresh-recordings-btn" class="text-button" type="button">Refresh</button>
+          <div class="recordings-header-actions">
+            <button id="open-folder-btn" class="text-button" type="button">Open Folder</button>
+            <button id="refresh-recordings-btn" class="text-button" type="button">Refresh</button>
+          </div>
         </div>
         <div id="recordings-list" class="recordings-list">
           <div class="recordings-empty">No recordings yet.</div>

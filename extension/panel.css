@@ -495,6 +495,11 @@ button:disabled {
   gap: 12px;
 }
 
+.recordings-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .recordings-title {
   margin: 0;
   font-size: 13px;
@@ -554,6 +559,34 @@ button:disabled {
   border-color: var(--border-strong);
 }
 
+.recording-item.is-working {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.recording-item.is-working .recording-item-title::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 8px;
+  vertical-align: 1px;
+  animation: working-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes working-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recording-item.is-working .recording-item-title::before {
+    animation: none;
+  }
+}
+
 .recording-item-top {
   display: flex;
   flex-direction: column;
@@ -585,6 +618,35 @@ button:disabled {
   border-radius: 50%;
   background: var(--text-faint);
   display: inline-block;
+}
+
+.recording-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.recording-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid rgba(47, 127, 105, 0.45);
+  background: rgba(47, 127, 105, 0.08);
+  color: #6ec39c;
+  cursor: help;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.recording-badge:hover {
+  background: rgba(47, 127, 105, 0.16);
+  border-color: var(--accent);
+}
+
+.recording-badge svg {
+  display: block;
 }
 
 .recording-item-tags {
@@ -662,14 +724,64 @@ button:disabled {
 
 .recording-item-progress .progress-label {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   font-size: 11px;
   color: var(--text-muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   font-weight: 600;
+}
+
+.recording-item-progress .progress-spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: progress-spinner-rotate 0.9s linear infinite;
+}
+
+.recording-item-progress .progress-label [data-role="progress-label"] {
+  flex: 1;
+  min-width: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Spinner mode: whisper has no real progress %, so hide the bar + percent
+   and surface the spinner + stage label as a small dialog-style indicator. */
+.recording-item-progress.is-spinner {
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.recording-item-progress.is-spinner .progress-spinner {
+  display: inline-block;
+}
+
+.recording-item-progress.is-spinner .progress-bar,
+.recording-item-progress.is-spinner .progress-percent {
+  display: none;
+}
+
+@keyframes progress-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recording-item-progress .progress-spinner {
+    animation: none;
+    border-top-color: var(--accent);
+  }
 }
 
 .recording-item-progress .progress-percent {

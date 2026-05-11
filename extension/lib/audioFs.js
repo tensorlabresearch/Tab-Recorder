@@ -1,7 +1,6 @@
 const HANDLE_DB_NAME = "tabRecorderHandles";
 const HANDLE_DB_STORE = "handles";
 const HANDLE_KEY = "recordingsDir";
-const DURATION_CACHE_KEY = "v2DurationCache";
 
 let cachedHandle = null;
 
@@ -410,21 +409,21 @@ export async function probeAudioDuration(file) {
   });
 }
 
-export async function getDurationCache() {
-  try {
-    const result = await chrome.storage.local.get(DURATION_CACHE_KEY);
-    return result?.[DURATION_CACHE_KEY] || {};
-  } catch (_) {
-    return {};
-  }
+// Runtime-only duration cache. Reset every time the panel page is loaded
+// so the disk is treated as the source of truth on each fresh open. We keep
+// the in-memory map to avoid re-decoding the same file repeatedly within a
+// single panel session.
+const runtimeDurationCache = new Map();
+
+export function getDurationCache() {
+  return Object.fromEntries(runtimeDurationCache);
 }
 
-export async function setCachedDuration(fileName, durationMs) {
+export function setCachedDuration(fileName, durationMs) {
   if (!fileName || !Number.isFinite(durationMs) || durationMs <= 0) return;
-  const cache = await getDurationCache();
-  if (cache[fileName] === durationMs) return;
-  cache[fileName] = durationMs;
-  try {
-    await chrome.storage.local.set({ [DURATION_CACHE_KEY]: cache });
-  } catch (_) {}
+  runtimeDurationCache.set(fileName, durationMs);
+}
+
+export function clearRuntimeDurationCache() {
+  runtimeDurationCache.clear();
 }
