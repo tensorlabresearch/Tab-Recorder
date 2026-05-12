@@ -342,6 +342,25 @@ button:disabled {
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+/* Support link in pre-record actions */
+.support-link {
+  display: block;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-decoration: none;
+  padding: 4px 0;
+  transition: color 120ms ease;
+}
+
+.support-link:hover {
+  color: var(--accent);
+}
+
+.support-link:active {
+  opacity: 0.8;
+}
+
 .danger {
   background: var(--danger);
   color: #ffecec;
@@ -465,6 +484,65 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 999px;
   overflow: hidden;
+}
+
+.mute-btn {
+  width: auto;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mute-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: #4d6886;
+}
+
+.mute-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.mute-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--text-muted);
+  transition: fill 120ms ease;
+}
+
+.mute-btn:hover:not(:disabled) svg {
+  fill: var(--text);
+}
+
+/* muted state */
+.mute-btn[aria-pressed="true"] {
+  border-color: rgba(240, 176, 63, 0.45);
+}
+
+.mute-btn[aria-pressed="true"] .mute-icon {
+  display: none;
+}
+
+.mute-btn[aria-pressed="true"] .muted-icon {
+  display: block;
+}
+
+.mute-btn[aria-pressed="true"] svg {
+  fill: var(--warning);
+}
+
+/* unmuted state: show speaker icon, hide muted-slash icon */
+.mute-btn[aria-pressed="false"] .mute-icon {
+  display: block;
+}
+
+.mute-btn[aria-pressed="false"] .muted-icon {
+  display: none;
 }
 
 .meter-fill {

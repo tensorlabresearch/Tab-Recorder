@@ -38,6 +38,9 @@ const openFolderButton = document.getElementById("open-folder-btn");
 const folderNameEl = document.getElementById("folder-name");
 const pickFolderButton = document.getElementById("pick-folder-btn");
 
+const micMuteBtn = document.getElementById("mic-mute-btn");
+const tabMuteBtn = document.getElementById("tab-mute-btn");
+
 const MIC_DEVICE_ID_KEY = "selectedMicDeviceId";
 const NO_MIC_VALUE = "__none__";
 
@@ -55,6 +58,11 @@ let changeInProgress = false;
 let cachedMicDevices = [];
 let pauseStartedAt = null;
 let totalPausedMs = 0;
+let labelTimerId = null;
+let lastAutoLabel = "";
+
+let tabMuted = false;
+let micMuted = false;
 
 let graph = freshGraph();
 
@@ -74,9 +82,12 @@ function emptyNodeGroup() {
 init();
 
 async function init() {
+  const initialLabel = defaultTimestampLabel();
   if (!meetingLabelInput.value) {
-    meetingLabelInput.value = defaultTimestampLabel();
+    meetingLabelInput.value = initialLabel;
   }
+  lastAutoLabel = initialLabel;
+  startLabelTimer();
 
   const stored = await chrome.storage.local.get([MIC_DEVICE_ID_KEY]).catch(() => ({}));
 
@@ -108,8 +119,21 @@ async function init() {
       setChanging(false);
     });
   });
+
+  tabMuteBtn?.addEventListener("click", () => {
+    toggleTabMute();
+  });
+  micMuteBtn?.addEventListener("click", () => {
+    toggleMicMute();
+  });
+
   openSettingsButton.addEventListener("click", async () => {
     await chrome.tabs.create({ url: chrome.runtime.getURL("settings.html") });
+  });
+  const openSupportLink = document.getElementById("open-support-link");
+  openSupportLink?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    await chrome.tabs.create({ url: chrome.runtime.getURL("support.html") });
   });
 
   navigator.mediaDevices.addEventListener("devicechange", () => {
@@ -263,6 +287,7 @@ async function onMicSelectChange(newValue) {
 
 async function onStartRecording() {
   if (mediaRecorder) return;
+  stopLabelTimer();
   startButton.disabled = true;
   statusEl.textContent = "Pick the tab to record...";
   pauseStartedAt = null;
@@ -489,6 +514,24 @@ function updateMicMeterVisibility() {
   micLevelEl.parentElement.parentElement.style.opacity = has ? "1" : "0.4";
 }
 
+function toggleTabMute() {
+  tabMuted = !tabMuted;
+  tabMuteBtn.setAttribute("aria-pressed", String(tabMuted));
+  if (graph.tab.gain) {
+    const value = tabMuted ? 0 : TAB_GAIN;
+    rampGain(graph.tab.gain, value, FADE_SECONDS);
+  }
+}
+
+function toggleMicMute() {
+  micMuted = !micMuted;
+  micMuteBtn.setAttribute("aria-pressed", String(micMuted));
+  if (graph.mic.gain) {
+    const value = micMuted ? 0 : MIC_GAIN;
+    rampGain(graph.mic.gain, value, FADE_SECONDS);
+  }
+}
+
 async function onChangeTab() {
   if (!mediaRecorder || mediaRecorder.state !== "recording") return;
   if (changeInProgress) return;
@@ -616,11 +659,39 @@ function resetRecordingUI() {
   }
   pauseStartedAt = null;
   totalPausedMs = 0;
-  meetingLabelInput.value = defaultTimestampLabel();
+  tabMuted = false;
+  micMuted = false;
+  tabMuteBtn?.setAttribute("aria-pressed", "false");
+  micMuteBtn?.setAttribute("aria-pressed", "false");
+  const newLabel = defaultTimestampLabel();
+  meetingLabelInput.value = newLabel;
+  lastAutoLabel = newLabel;
+  startLabelTimer();
   elapsedEl.textContent = "00:00";
   tabLevelEl.style.width = "0%";
   micLevelEl.style.width = "0%";
   micLevelEl.parentElement.parentElement.style.opacity = "1";
+}
+
+function startLabelTimer() {
+  stopLabelTimer();
+  labelTimerId = setInterval(() => {
+    const nowStr = defaultTimestampLabel();
+    const currentVal = String(meetingLabelInput.value || "").trim();
+    // Only overwrite if the field still shows the last auto-generated label
+    // (i.e. the user hasn't typed anything custom).
+    if (!currentVal || currentVal === lastAutoLabel) {
+      meetingLabelInput.value = nowStr;
+      lastAutoLabel = nowStr;
+    }
+  }, 1000);
+}
+
+function stopLabelTimer() {
+  if (labelTimerId) {
+    clearInterval(labelTimerId);
+    labelTimerId = null;
+  }
 }
 
 function startElapsedTimer() {

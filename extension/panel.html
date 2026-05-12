@@ -46,6 +46,9 @@
         <div class="actions">
           <button id="start-btn" class="primary">Start Recording</button>
           <button id="open-settings-btn" class="ghost">Settings</button>
+          <a id="open-support-link" class="support-link" href="#">
+            Help fund student research
+          </a>
         </div>
       </section>
 
@@ -62,10 +65,18 @@
           <div class="meter-row">
             <span class="meter-label">Tab</span>
             <div class="meter-bar"><div id="tab-level" class="meter-fill"></div></div>
+            <button id="tab-mute-btn" class="mute-btn" type="button" title="Mute tab audio" aria-label="Mute tab audio" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="mute-icon"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="muted-icon"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73 4.27 3z"/></svg>
+            </button>
           </div>
           <div class="meter-row">
             <span class="meter-label">Mic</span>
             <div class="meter-bar"><div id="mic-level" class="meter-fill"></div></div>
+            <button id="mic-mute-btn" class="mute-btn" type="button" title="Mute microphone" aria-label="Mute microphone" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="mute-icon"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="muted-icon"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73 4.27 3z"/></svg>
+            </button>
           </div>
         </div>
 
