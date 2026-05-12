@@ -1,0 +1,140 @@
+:root {
+  color-scheme: dark;
+  font-family: "Sora", "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #0c131a;
+  color: #e7edf2;
+}
+
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.top h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.top p {
+  margin: 6px 0 18px;
+  color: #94a4b2;
+}
+
+.card {
+  border: 1px solid #2b3f4f;
+  border-radius: 12px;
+  background: #101a24;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: #e7edf2;
+}
+
+.hint {
+  color: #94a4b2;
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+.hint:last-child {
+  margin-bottom: 0;
+}
+
+.help-text {
+  color: #7a8a99;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+.address-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #0a1118;
+  border: 1px solid #2b3f4f;
+  border-radius: 8px;
+}
+
+.address-box code {
+  flex: 1 1 200px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 13px;
+  color: #e7edf2;
+  word-break: break-all;
+}
+
+.address-box button {
+  flex: 0 0 auto;
+}
+
+ul.hint {
+  padding-left: 18px;
+}
+
+ul.hint li {
+  margin-bottom: 6px;
+}
+
+ul.hint li:last-child {
+  margin-bottom: 0;
+}
+
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  background: #2f7f69;
+  color: #ecf9f4;
+}
+
+button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondary {
+  background: #1f3342;
+  color: #d7e7f4;
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: #1f3342;
+  color: #e7edf2;
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-size: 14px;
+  opacity: 0;
+  transition: all 0.3s ease;
+  z-index: 100;
+}
+
+.toast.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+.toast.success {
+  background: #2f7f69;
+}
