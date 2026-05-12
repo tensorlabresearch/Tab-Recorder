@@ -33,7 +33,8 @@ Tab Recorder is an audio-first browser extension that captures browser tab audio
 | `storage` | To persist session metadata (recording list, titles, durations) across browser restarts |
 | `downloads` | To save recordings to the user's Downloads folder with a default filename |
 | `host_permissions: <all_urls>` | Required by `tabCapture` API to capture audio from any active tab regardless of origin |
-| `host_permissions: https://huggingface.co/*` | **Not active in production.** Included for development/debugging of local model loading. In production builds, Whisper models run entirely locally via WASM/ONNX; no network calls are made to huggingface.co. |
+
+**Removed in v1.1.0:** `host_permissions: https://huggingface.co/*` was previously included for development/debugging of local model loading. This permission has been removed because Whisper models run entirely locally via WASM/ONNX; no network calls are made.
 
 ## Data Usage — How Is Data Used?
 
