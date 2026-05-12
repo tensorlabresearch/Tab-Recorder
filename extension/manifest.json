@@ -13,8 +13,7 @@
     "downloads"
   ],
   "host_permissions": [
-    "<all_urls>",
-    "https://huggingface.co/*"
+    "<all_urls>"
   ],
   "icons": {
     "16": "icons/icon16.png",

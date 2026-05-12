@@ -1,0 +1,171 @@
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.1.0)'
+        required: true
+        default: '1.1.0'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    name: Build Extension ZIP
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq zip rsync
+
+      - name: Validate manifest.json
+        run: |
+          if [[ ! -f "extension/manifest.json" ]]; then
+            echo "ERROR: manifest.json not found!"
+            exit 1
+          fi
+          
+          # Validate JSON syntax
+          jq empty extension/manifest.json
+          
+          # Extract and validate critical fields
+          NAME=$(jq -r '.name' extension/manifest.json)
+          VERSION=$(jq -r '.version' extension/manifest.json)
+          DESC=$(jq -r '.description' extension/manifest.json)
+          MV=$(jq -r '.manifest_version' extension/manifest.json)
+          
+          if [[ "$NAME" == "null" || -z "$NAME" ]]; then
+            echo "ERROR: manifest 'name' is missing"
+            exit 1
+          fi
+          
+          if [[ "$VERSION" == "null" || -z "$VERSION" ]]; then
+            echo "ERROR: manifest 'version' is missing"
+            exit 1
+          fi
+          
+          if [[ "$DESC" == "null" || -z "$DESC" ]]; then
+            echo "ERROR: manifest 'description' is missing"
+            exit 1
+          fi
+          
+          if [[ "$MV" != "3" ]]; then
+            echo "ERROR: Expected manifest_version 3, got $MV"
+            exit 1
+          fi
+          
+          echo "✅ Manifest validated: $NAME v$VERSION (MV$MV)"
+
+      - name: Audit for policy violations
+        run: |
+          echo "=== Auditing for Chrome Web Store policy violations ==="
+          
+          # Check for remote script loading (CDNs, fetch() to arbitrary URLs)
+          # These are red flags for Chrome Web Store review
+          RED_FLAGS=0
+          
+          # Check JS files for fetch() calls (excluding transformers.js bundled third-party code)
+          # We exclude lib/transformersJs/ because it's a vendored dependency
+          PANEL_SW_FILES=$(find extension -maxdepth 1 -name "*.js" -o -name "panel.js" -o -name "service_worker.js" -o -name "settings.js")
+          if grep -rE "fetch\s*\(" $PANEL_SW_FILES 2>/dev/null; then
+            echo "⚠️  WARNING: fetch() found in extension JS. Ensure it's only used for allowed origins."
+            RED_FLAGS=$((RED_FLAGS + 1))
+          fi
+          
+          # Check for eval() or new Function()
+          if grep -rE "eval\s*\(|new\s+Function\s*\(" extension/ --include="*.js" 2>/dev/null; then
+            echo "❌ ERROR: eval() or new Function() found — Chrome Web Store will reject this!"
+            exit 1
+          fi
+          
+          # Check for inline scripts in HTML
+          if grep -rE '<script\s*>[^<]*<' extension/ --include="*.html" 2>/dev/null; then
+            echo "❌ ERROR: Inline <script> body content found! Move to external JS modules."
+            exit 1
+          fi
+          
+          # Check icons exist
+          for SIZE in 16 32 48 128; do
+            if [[ ! -f "extension/icons/icon${SIZE}.png" ]]; then
+              echo "⚠️  WARNING: Missing icons/icon${SIZE}.png"
+              RED_FLAGS=$((RED_FLAGS + 1))
+            fi
+          done
+          
+          # Check store assets exist for tagged releases
+          if [[ -n "${{ github.ref_name }}" && "${{ github.ref_name }}" == v* ]]; then
+            if [[ ! -d "store-assets" ]]; then
+              echo "⚠️  WARNING: store-assets/ directory not found. Store listing images will be missing."
+              RED_FLAGS=$((RED_FLAGS + 1))
+            fi
+          fi
+          
+          echo "=== Audit complete. Red flags: $RED_FLAGS ==="
+
+      - name: Build extension ZIP
+        run: |
+          VERSION=$(jq -r '.version' extension/manifest.json)
+          STAGE_DIR="build/extension-staged"
+          ZIP_NAME="tab-recorder-v${VERSION}.zip"
+          
+          mkdir -p "$STAGE_DIR"
+          
+          # Copy extension files
+          rsync -a --exclude='*.map' --exclude='.DS_Store' --exclude='__MACOSX' \
+              extension/ "$STAGE_DIR/"
+          
+          # Create ZIP from the staged root (not in a subfolder)
+          cd "$STAGE_DIR"
+          zip -r "../../$ZIP_NAME" . -x "*.map" -x "*.git*"
+          cd ../..
+          
+          # Verify ZIP contents
+          echo "=== ZIP contents ==="
+          unzip -l "$ZIP_NAME" | tail -5
+          echo ""
+          
+          # Size check (CWS limit is 2GB)
+          ZIP_SIZE=$(stat -c%s "$ZIP_NAME")
+          if [[ "$ZIP_SIZE" -gt 2147483648 ]]; then
+            echo "❌ ERROR: ZIP exceeds 2GB Chrome Web Store limit"
+            exit 1
+          fi
+          
+          echo "✅ Built: $ZIP_NAME ($(du -h "$ZIP_NAME" | cut -f1))"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tab-recorder-extension
+          path: tab-recorder-*.zip
+          retention-days: 90
+
+      - name: Create GitHub Release (tagged pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tab-recorder-*.zip
+          generate_release_notes: true
+          body: |
+            ## Tab Recorder ${{ github.ref_name }}
+
+            ### Chrome Web Store Submission Package
+            - Includes the extension ZIP ready for upload.
+            - Manifest v3 compliant.
+            - All bundled dependencies included (no remote scripts).
+
+            ### Submission Checklist
+            - [ ] Upload ZIP to [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)
+            - [ ] Add screenshots and promotional images
+            - [ ] Complete privacy practices disclosure
+            - [ ] Set category (e.g., Productivity)
+            - [ ] Set regions/visibility
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

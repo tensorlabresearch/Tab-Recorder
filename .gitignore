@@ -8,3 +8,6 @@ coverage/
 .claude/
 .opencode/
 CLAUDE.md
+build/
+test-results/
+playwright-report/

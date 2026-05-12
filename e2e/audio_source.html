@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tab Recorder E2E Audio Source</title>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 2rem; }
+  pre { background: #f5f5f5; padding: 1rem; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1>E2E Audio Source</h1>
+<p>Click anywhere on this page to start the AudioContext (user-gesture required).</p>
+<pre id="status">waiting...</pre>
+
+<script>
+(function() {
+  const statusEl = document.getElementById('status');
+  let ctx = null;
+  let osc = null;
+  let gain = null;
+  let rec = null;
+  let dest = null;
+  let chunks = [];
+  let isRecording = false;
+
+  function log(msg) {
+    statusEl.textContent += '\n' + msg;
+    console.log('[E2E]', msg);
+  }
+
+  window.startAudioAndRecording = async function() {
+    if (isRecording) return { ok: false, error: 'Already recording' };
+    try {
+      // Create AudioContext and oscillator
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      osc = ctx.createOscillator();
+      gain = ctx.createGain();
+      gain.gain.value = 0.5;
+      osc.type = 'sine';
+      osc.frequency.value = 440;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+
+      // Create a MediaStreamDestination for MediaRecorder
+      dest = ctx.createMediaStreamDestination();
+      gain.connect(dest); // Route oscillator to destination
+
+      // Start MediaRecorder
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4');
+
+      rec = new MediaRecorder(dest.stream, { mimeType, audioBitsPerSecond: 128000 });
+      chunks = [];
+
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      rec.onstop = () => {
+        log('Recording stopped. ' + chunks.length + ' chunks captured.');
+      };
+
+      rec.onerror = (e) => {
+        log('MediaRecorder error: ' + e.message);
+      };
+
+      rec.start(1000); // collect every 1s
+      isRecording = true;
+      log('Recording started. MimeType: ' + mimeType);
+
+      return { ok: true, mimeType, streamTracks: dest.stream.getAudioTracks().length };
+    } catch (err) {
+      log('ERROR: ' + err.message);
+      return { ok: false, error: err.message };
+    }
+  };
+
+  window.stopRecording = async function() {
+    if (!rec || rec.state !== 'recording') return { ok: false, error: 'Not recording' };
+    return new Promise((resolve) => {
+      rec.onstop = () => {
+        const blob = new Blob(chunks, { type: rec.mimeType });
+        // Convert blob to ArrayBuffer for extraction via evaluate
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          resolve({
+            ok: true,
+            size: blob.size,
+            mimeType: rec.mimeType,
+            chunks: chunks.length,
+            // Return as base64 string so Playwright can receive it
+            base64: btoa(new Uint8Array(reader.result).reduce((data, byte) => data + String.fromCharCode(byte), ''))
+          });
+        };
+        reader.readAsArrayBuffer(blob);
+      };
+      rec.stop();
+      if (osc) { try { osc.stop(); } catch(e){} }
+      if (ctx) { try { ctx.close(); } catch(e){} }
+      isRecording = false;
+    });
+  };
+
+  // Auto-start on click for user gesture
+  document.addEventListener('click', () => {
+    if (!ctx || ctx.state === 'suspended') {
+      if (ctx) ctx.resume();
+      log('AudioContext resumed via user gesture');
+    }
+  }, { once: true });
+
+  log('Page loaded. Waiting for user gesture...');
+})();
+</script>
+</body>
+</html>
