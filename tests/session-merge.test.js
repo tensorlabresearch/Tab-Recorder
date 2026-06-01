@@ -5,6 +5,57 @@ import {
   mergeSessionSources
 } from "../extension/lib/sessionMerge.js";
 
+describe("summary sidecar propagation", () => {
+  it("synthesizeSessionFromFs carries summaryPath + description through", () => {
+    const out = synthesizeSessionFromFs({
+      baseName: "foo",
+      path: "Tab Recorder/2026-06-01/foo.webm",
+      summaryPath: "Tab Recorder/2026-06-01/foo.summary.md",
+      description: "A meeting about Q3 plans."
+    });
+    expect(out._fsSummaryPath).toBe("Tab Recorder/2026-06-01/foo.summary.md");
+    expect(out.description).toBe("A meeting about Q3 plans.");
+  });
+
+  it("synthesizeSessionFromFs defaults sidecar fields when absent", () => {
+    const out = synthesizeSessionFromFs({
+      baseName: "foo",
+      path: "Tab Recorder/2026-06-01/foo.webm"
+    });
+    expect(out._fsSummaryPath).toBeNull();
+    expect(out.description).toBe("");
+  });
+
+  it("mergeSessionSources augments a stored session with FS summary sidecar info", () => {
+    const stored = [{ id: "s1", fileName: "Tab Recorder/foo.webm", description: "" }];
+    const fs = [{
+      path: "Tab Recorder/foo.webm",
+      baseName: "foo",
+      summaryPath: "Tab Recorder/foo.summary.md",
+      description: "Augmented from sidecar."
+    }];
+    const out = mergeSessionSources(stored, [], fs);
+    expect(out).toHaveLength(1);
+    expect(out[0]._fsSummaryPath).toBe("Tab Recorder/foo.summary.md");
+    expect(out[0].description).toBe("Augmented from sidecar.");
+  });
+
+  it("mergeSessionSources does not clobber an existing description", () => {
+    const stored = [{
+      id: "s1",
+      fileName: "Tab Recorder/foo.webm",
+      description: "Original."
+    }];
+    const fs = [{
+      path: "Tab Recorder/foo.webm",
+      baseName: "foo",
+      description: "From sidecar."
+    }];
+    const out = mergeSessionSources(stored, [], fs);
+    expect(out[0].description).toBe("Original.");
+  });
+});
+
 describe("pathKey", () => {
   it("returns null for missing input", () => {
     expect(pathKey(null)).toBeNull();
