@@ -72,6 +72,33 @@
       </section>
 
       <section class="card">
+        <h2>Browser AI</h2>
+        <p class="hint">
+          When Chrome's built-in Gemini Nano model is already available
+          on this device, Tab Recorder can produce a one-sentence
+          description and a short summary for each recording from its
+          transcript. Inference runs locally; no audio or text leaves
+          your machine.
+        </p>
+
+        <div class="model-status">
+          <div class="model-status-row">
+            <span class="model-label">Status</span>
+            <span id="browser-ai-state" class="model-value">Detecting...</span>
+          </div>
+        </div>
+
+        <p id="browser-ai-help" class="help-text">
+          Tab Recorder never triggers the model download itself. To
+          enable Nano, toggle
+          <code>chrome://flags/#prompt-api-for-gemini-nano</code> and
+          <code>chrome://flags/#optimization-guide-on-device-model</code>,
+          then visit <code>chrome://components</code> and update
+          "Optimization Guide On Device Model".
+        </p>
+      </section>
+
+      <section class="card">
         <h2>About</h2>
         <p class="hint">
           MP3 conversion uses

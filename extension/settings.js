@@ -9,6 +9,7 @@ import {
   getAutoTranscribePreference,
   setAutoTranscribePreference
 } from "./lib/whisperModel.js";
+import { isAvailable as browserAiAvailable } from "./lib/browserAi.js";
 
 const modelSelect = document.getElementById("model-select");
 const engineStateEl = document.getElementById("engine-state");
@@ -64,6 +65,24 @@ async function init() {
 
   downloadButton.addEventListener("click", onWarmupModel);
   clearCacheButton.addEventListener("click", onClearCache);
+
+  refreshBrowserAiState().catch(() => {});
+}
+
+async function refreshBrowserAiState() {
+  const stateEl = document.getElementById("browser-ai-state");
+  const helpEl = document.getElementById("browser-ai-help");
+  if (!stateEl) return;
+  const available = await browserAiAvailable();
+  if (available) {
+    stateEl.textContent = "Available (Gemini Nano detected)";
+    stateEl.classList.add("is-positive");
+    if (helpEl) helpEl.classList.add("hidden");
+  } else {
+    stateEl.textContent = "Not detected on this device";
+    stateEl.classList.remove("is-positive");
+    if (helpEl) helpEl.classList.remove("hidden");
+  }
 }
 
 function buildModelOptions(models, current) {
