@@ -9,7 +9,11 @@ import {
   getAutoTranscribePreference,
   setAutoTranscribePreference
 } from "./lib/whisperModel.js";
-import { isAvailable as browserAiAvailable } from "./lib/browserAi.js";
+import {
+  isAvailable as browserAiAvailable,
+  getAutoSummarizePreference,
+  setAutoSummarizePreference
+} from "./lib/browserAi.js";
 
 const modelSelect = document.getElementById("model-select");
 const engineStateEl = document.getElementById("engine-state");
@@ -72,6 +76,7 @@ async function init() {
 async function refreshBrowserAiState() {
   const stateEl = document.getElementById("browser-ai-state");
   const helpEl = document.getElementById("browser-ai-help");
+  const autoToggle = document.getElementById("auto-summarize-toggle");
   if (!stateEl) return;
   const available = await browserAiAvailable();
   if (available) {
@@ -82,6 +87,26 @@ async function refreshBrowserAiState() {
     stateEl.textContent = "Not detected on this device";
     stateEl.classList.remove("is-positive");
     if (helpEl) helpEl.classList.remove("hidden");
+  }
+  if (autoToggle) {
+    autoToggle.disabled = !available;
+    autoToggle.checked = available ? await getAutoSummarizePreference() : false;
+    if (!autoToggle.dataset.bound) {
+      autoToggle.dataset.bound = "1";
+      autoToggle.addEventListener("change", async () => {
+        try {
+          await setAutoSummarizePreference(autoToggle.checked);
+          showToast(
+            autoToggle.checked
+              ? "Auto-summarize enabled"
+              : "Auto-summarize disabled",
+            "success"
+          );
+        } catch (error) {
+          showToast(`Error: ${error?.message || error}`, "error");
+        }
+      });
+    }
   }
 }
 

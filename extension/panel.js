@@ -17,6 +17,7 @@ import { mergeSessionSources } from "./lib/sessionMerge.js";
 import {
   isAvailable as isBrowserAiAvailable,
   summarizeAndDescribe,
+  getAutoSummarizePreference,
   BROWSER_AI
 } from "./lib/browserAi.js";
 import { serializeSummary } from "./lib/summaryFile.js";
@@ -1780,7 +1781,42 @@ async function transcribeSessionImpl(session, button) {
 
   setRowProgress(row, { label: "Done", spinner: false });
   statusEl.textContent = `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).`;
+
+  await maybeAutoSummarize(session, result.text, handle, row);
+
   await loadAndRenderSessions();
+}
+
+async function maybeAutoSummarize(session, transcriptText, handle, row) {
+  if (!browserAiAvailable) return;
+  let enabled = false;
+  try {
+    enabled = await getAutoSummarizePreference();
+  } catch (_) {}
+  if (!enabled) return;
+  if (!transcriptText || !transcriptText.trim()) return;
+
+  try {
+    if (row) setRowProgress(row, { label: "Summarizing with Gemini Nano...", spinner: true });
+    const { description, summary } = await summarizeAndDescribe(transcriptText);
+    if (!description && !summary) return;
+    const body = serializeSummary({
+      description,
+      summary,
+      model: BROWSER_AI.MODEL_LABEL,
+      generatedAt: new Date()
+    });
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([body], { type: "text/markdown" }),
+      { extension: "summary.md" }
+    );
+    statusEl.textContent = "Transcript saved. Summary saved next to the recording.";
+  } catch (error) {
+    // Auto-summary must not poison the happy transcription path.
+    console.warn("[panel] auto-summarize failed", error);
+  }
 }
 
 async function ensureStoredSessionId(session, durationMs) {
