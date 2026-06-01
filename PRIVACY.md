@@ -4,7 +4,7 @@ This document is used to answer the **Privacy practices** questionnaire in the C
 
 ## Single Purpose Description
 
-Tab Recorder is an audio-first browser extension that captures browser tab audio (and optionally microphone input) directly within Chrome, stores recordings locally, and provides optional on-device speech-to-text transcription. Its single purpose is **browser tab audio recording with local storage and transcription**.
+Tab Recorder is an audio-first browser extension that captures browser tab audio (and optionally microphone input) directly within Chrome, stores recordings locally, and provides optional on-device speech-to-text transcription and on-device summarization. Its single purpose is **browser tab audio recording with local storage, local transcription, and local summarization**.
 
 ## Data Collection — What Data Is Gathered?
 
@@ -13,8 +13,9 @@ Tab Recorder is an audio-first browser extension that captures browser tab audio
 ### Data handled locally:
 1. **Audio recordings** — Captured via `getDisplayMedia()`/`getUserMedia()` and stored as files on the user's local disk
 2. **Transcription text** — Generated locally via ONNX Runtime WASM (Transformers.js) within the browser
-3. **Session metadata** — Recording names, duration, timestamps stored in `chrome.storage.local`
-4. **File handles** — References to user-selected recording directory (via `showSaveFilePicker`)
+3. **Summary + description** — Generated locally by Chrome's built-in Gemini Nano (the Prompt API), only when the user has already enabled the model in `chrome://flags` and the browser reports it as available. The extension itself never triggers the multi-gigabyte model download.
+4. **Session metadata** — Recording names, duration, timestamps stored in `chrome.storage.local`
+5. **File handles** — References to user-selected recording directory (via `showSaveFilePicker`)
 
 ### Data NOT collected:
 - No account or identity information
@@ -40,6 +41,7 @@ Tab Recorder is an audio-first browser extension that captures browser tab audio
 
 - **Audio**: Saved as `.webm` files to the user's chosen local directory. The user can optionally convert to `.mp3` locally.
 - **Transcription**: Generated entirely in a Web Worker using bundled ONNX runtime. No text is sent to any server.
+- **Summary + description**: When the user opts in and Chrome's built-in Gemini Nano is already present on the device, the transcript is passed to the on-device model via the browser's Prompt API. Inference runs locally; no transcript or summary text leaves the machine. The resulting summary lives next to the recording as a plain `.summary.md` file. The extension probes availability with `LanguageModel.availability()` and only proceeds when the status is `"available"` — never `"downloadable"` — so it cannot initiate the model download on the user's behalf.
 - **Metadata**: Used solely to populate the recordings list UI.
 
 ## Data Sharing — With Whom Is Data Shared?

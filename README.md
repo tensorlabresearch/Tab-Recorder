@@ -45,6 +45,45 @@ default `whisper-small.en`) to your browser's cache. After that it runs offline.
 - Live transcript preview during transcription; progress bar walks through
   the recording based on whisper's emitted timestamps.
 - Optional auto-transcribe on stop (Settings).
+- Optional **on-device summary + one-line description** of each
+  recording, produced by Chrome's built-in Gemini Nano when the model
+  is already available locally (see "Browser AI" below).
+
+## Browser AI (optional)
+
+If your Chrome already has the built-in **Gemini Nano** model available
+locally (the same on-device LLM that powers Chrome's experimental AI
+features), Tab Recorder can use it to produce a one-sentence
+**description** and a short markdown **summary** for each recording
+from its transcript. The output lands next to the recording as
+`<name>.summary.md` (YAML frontmatter + a `## Summary` body), and the
+description appears as a subtitle under the recording's title in the
+panel.
+
+This feature is strictly opt-in and **strictly gated**: the extension
+queries `LanguageModel.availability()` and only proceeds when the
+status is exactly `"available"`. A status of `"downloadable"` is
+treated the same as unsupported, so Tab Recorder will **never**
+initiate the ~4 GB on-device-model download for you. Inference runs
+locally; nothing leaves your machine.
+
+To enable Nano in Chrome:
+
+1. Open `chrome://flags/#prompt-api-for-gemini-nano` → **Enabled**.
+2. Open `chrome://flags/#optimization-guide-on-device-model` →
+   **Enabled BypassPerfRequirement**.
+3. Restart Chrome.
+4. Open `chrome://components`, find **"Optimization Guide On Device
+   Model"**, and click **Check for update** until a version appears
+   (this triggers the model download — outside of Tab Recorder).
+5. Verify in DevTools: `await LanguageModel.availability()` should
+   return `"available"`.
+
+Once available, Settings → **Browser AI** shows the live status, and
+each recording with a transcript gets a **Summarize** button next to
+**Copy Transcript**. Toggle **Auto-summarize after transcription** if
+you want the sidecar generated automatically every time a transcript
+finishes.
 
 ## Settings
 
@@ -61,6 +100,11 @@ Open Settings from the panel:
 - **Clear Model Cache**: deletes the cached model files.
 - **Auto-transcribe new recordings**: when on, transcription starts the
   moment a recording stops.
+- **Browser AI**: status row that reports whether Chrome's built-in
+  Gemini Nano model is available on this device, plus the
+  **Auto-summarize after transcription** toggle (disabled until Nano
+  is detected). See the [Browser AI](#browser-ai-optional) section
+  above for setup details.
 
 ## Development
 
