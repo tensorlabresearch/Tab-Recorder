@@ -1,29 +1,47 @@
 :root {
   color-scheme: dark;
-  font-family: "Sora", "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  /* Tensor Lab brand stack: monospace UI + Georgia serif for editorial accents.
+     Mirrors github.com/tensorlabresearch/tensorlab.org. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+               "Liberation Mono", monospace;
 
-  --bg: #0b1220;
-  --bg-elev-top: #11203a;
-  --bg-elev: #0f1929;
-  --bg-input: #0a1524;
+  /* ─── Tensor Lab tokens (canonical) ─────────────────────────────────────── */
+  --tl-black: #050203;
+  --tl-black-soft: #0c0305;
+  --tl-red: #b61225;
+  --tl-red-hot: #ef233c;
+  --tl-red-deep: #3d050d;
+  --tl-ink: #fff5ef;
+  --tl-muted: #ead1ca;
+  --tl-dim: #c28d87;
+  --tl-line: rgba(182, 18, 37, 0.34);
+  --tl-surface: rgba(5, 2, 3, 0.42);
+  --tl-surface-hover: rgba(182, 18, 37, 0.12);
+  --tl-serif: Georgia, "Times New Roman", serif;
 
-  --border: #233247;
-  --border-strong: #2f4259;
+  /* ─── Tab Recorder semantic tokens, remapped onto Tensor Lab ─────────────── */
+  --bg: var(--tl-black);
+  --bg-elev-top: #160508;
+  --bg-elev: #100306;
+  --bg-input: #0a0204;
 
-  --text: #e8edf3;
-  --text-muted: #9bb0c5;
-  --text-faint: #6b7e95;
+  --border: rgba(182, 18, 37, 0.22);
+  --border-strong: var(--tl-line);
 
-  --accent: #2f7f69;
-  --accent-hover: #36967b;
-  --accent-glow: rgba(47, 127, 105, 0.22);
+  --text: var(--tl-ink);
+  --text-muted: var(--tl-muted);
+  --text-faint: var(--tl-dim);
+
+  --accent: var(--tl-red-hot);
+  --accent-hover: #ff5566;
+  --accent-glow: rgba(239, 35, 60, 0.22);
   --warning: #f0b03f;
-  --danger: #9a4141;
-  --danger-hover: #b04c4c;
-  --rec: #ff5b5b;
+  --danger: var(--tl-red);
+  --danger-hover: #d22b3d;
+  --rec: var(--tl-red-hot);
 
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
-                 0 18px 40px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 1px 0 rgba(255, 245, 239, 0.04) inset,
+                 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 
 * {
@@ -33,8 +51,9 @@
 body {
   margin: 0;
   background:
-    radial-gradient(1200px 600px at 50% -160px, rgba(47, 127, 105, 0.12), transparent 60%),
-    var(--bg);
+    radial-gradient(circle at 69% 41%, rgba(239, 35, 60, 0.09), transparent 21rem),
+    radial-gradient(circle at 11% 88%, rgba(82, 5, 15, 0.36), transparent 32rem),
+    linear-gradient(180deg, #0b0305 0%, #050203 46%, #120306 100%);
   color: var(--text);
   min-height: 100vh;
   font-size: 14px;
@@ -63,21 +82,11 @@ body {
 }
 
 .brand-mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent) 0%, #1f3342 100%);
-  position: relative;
-  box-shadow: 0 4px 12px rgba(47, 127, 105, 0.25);
+  width: 40px;
+  height: 56px;
+  background: url("icons/jellyfish.svg") center / contain no-repeat;
+  filter: drop-shadow(0 4px 14px rgba(239, 35, 60, 0.32));
   flex-shrink: 0;
-}
-
-.brand-mark::after {
-  content: "";
-  position: absolute;
-  inset: 9px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
 }
 
 .brand-text {
@@ -88,16 +97,18 @@ body {
 }
 
 .brand-name {
-  font-size: 16px;
+  font-family: var(--tl-serif);
+  font-size: 18px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.01em;
   line-height: 1.2;
 }
 
 .brand-subtitle {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-faint);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 /* Loading splash */
@@ -200,7 +211,7 @@ textarea {
 input:hover,
 select:hover,
 textarea:hover {
-  border-color: #3b5371;
+  border-color: var(--tl-line);
 }
 
 input:focus,
@@ -282,7 +293,7 @@ input[type="checkbox"] {
 }
 
 .folder-name.is-positive {
-  color: #6ec39c;
+  color: #ff5566;
 }
 
 /* Buttons */
@@ -312,8 +323,8 @@ button:disabled {
 
 .primary {
   background: var(--accent);
-  color: #edfbf6;
-  box-shadow: 0 6px 16px rgba(47, 127, 105, 0.28);
+  color: var(--tl-ink);
+  box-shadow: 0 6px 16px rgba(239, 35, 60, 0.28);
 }
 
 .primary:hover:not(:disabled) {
@@ -322,7 +333,7 @@ button:disabled {
 
 .primary:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 6px 16px rgba(47, 127, 105, 0.28);
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 6px 16px rgba(239, 35, 60, 0.28);
 }
 
 .ghost {
@@ -332,7 +343,7 @@ button:disabled {
 }
 
 .ghost:hover:not(:disabled) {
-  border-color: #4d6886;
+  border-color: rgba(239, 35, 60, 0.4);
   color: var(--text);
 }
 
@@ -363,8 +374,8 @@ button:disabled {
 
 .danger {
   background: var(--danger);
-  color: #ffecec;
-  box-shadow: 0 6px 16px rgba(154, 65, 65, 0.28);
+  color: var(--tl-ink);
+  box-shadow: 0 6px 16px rgba(182, 18, 37, 0.28);
 }
 
 .danger:hover:not(:disabled) {
@@ -373,7 +384,7 @@ button:disabled {
 
 .danger:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(154, 65, 65, 0.30), 0 6px 16px rgba(154, 65, 65, 0.28);
+  box-shadow: 0 0 0 3px rgba(182, 18, 37, 0.30), 0 6px 16px rgba(182, 18, 37, 0.28);
 }
 
 .actions {
@@ -501,7 +512,7 @@ button:disabled {
 
 .mute-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
-  border-color: #4d6886;
+  border-color: rgba(239, 35, 60, 0.4);
 }
 
 .mute-btn:active:not(:disabled) {
@@ -548,7 +559,7 @@ button:disabled {
 .meter-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--accent) 0%, #6ec39c 70%, var(--warning) 90%, var(--danger) 100%);
+  background: linear-gradient(90deg, var(--accent) 0%, #ff5566 70%, var(--warning) 90%, var(--danger) 100%);
   transition: width 60ms linear;
   border-radius: 999px;
 }
@@ -722,15 +733,15 @@ button:disabled {
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  border: 1px solid rgba(47, 127, 105, 0.45);
-  background: rgba(47, 127, 105, 0.08);
-  color: #6ec39c;
+  border: 1px solid rgba(239, 35, 60, 0.45);
+  background: rgba(239, 35, 60, 0.08);
+  color: #ff5566;
   cursor: help;
   transition: background 120ms ease, border-color 120ms ease;
 }
 
 .recording-badge:hover {
-  background: rgba(47, 127, 105, 0.16);
+  background: rgba(239, 35, 60, 0.16);
   border-color: var(--accent);
 }
 
@@ -757,9 +768,9 @@ button:disabled {
 }
 
 .tag.is-positive {
-  border-color: rgba(47, 127, 105, 0.45);
-  color: #6ec39c;
-  background: rgba(47, 127, 105, 0.08);
+  border-color: rgba(239, 35, 60, 0.45);
+  color: #ff5566;
+  background: rgba(239, 35, 60, 0.08);
 }
 
 .recording-item-actions {
@@ -782,17 +793,17 @@ button:disabled {
 
 .row-action:hover:not(:disabled) {
   color: var(--text);
-  border-color: #4d6886;
+  border-color: rgba(239, 35, 60, 0.4);
 }
 
 .row-action.is-danger {
-  border-color: rgba(154, 65, 65, 0.45);
-  color: #d99595;
+  border-color: rgba(182, 18, 37, 0.45);
+  color: var(--tl-muted);
 }
 
 .row-action.is-danger:hover:not(:disabled) {
-  background: rgba(154, 65, 65, 0.12);
-  color: #ffb8b8;
+  background: rgba(182, 18, 37, 0.12);
+  color: var(--tl-ink);
   border-color: var(--danger);
 }
 
@@ -892,7 +903,7 @@ button:disabled {
 .recording-item-progress .progress-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--accent) 0%, #6ec39c 100%);
+  background: linear-gradient(90deg, var(--accent) 0%, #ff5566 100%);
   border-radius: 999px;
   transition: width 120ms linear;
 }
