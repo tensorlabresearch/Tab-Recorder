@@ -2,11 +2,14 @@
 
 ![Tab Recorder Logo](extension/icons/icon128.png)
 
-Audio-only tab + microphone recorder for Chromium browsers. Saves to your local
-Downloads folder, converts to MP3 with [LAME](https://lame.sourceforge.net/) via
-[lamejs](https://github.com/zhuker/lamejs), and transcribes locally with
+Audio-only tab + microphone recorder for Chromium browsers. Records to your
+local Downloads folder, converts to MP3 with [LAME](https://lame.sourceforge.net/)
+via [lamejs](https://github.com/zhuker/lamejs), transcribes locally with
 [Transformers.js](https://github.com/huggingface/transformers.js) running
-Whisper through ONNX Runtime Web (WebGPU when available, WASM CPU fallback).
+Whisper through ONNX Runtime Web (WebGPU when available, WASM CPU fallback),
+and **optionally summarizes each recording with Chrome's built-in Gemini Nano**
+— strictly opt-in, gated on the model already being present locally so the
+extension never triggers the on-device-model download for you.
 
 Nothing leaves your machine except the one-time Whisper model download from
 HuggingFace on first transcription. No analytics, no cloud upload, no API keys.
@@ -50,6 +53,8 @@ default `whisper-small.en`) to your browser's cache. After that it runs offline.
   is already available locally (see "Browser AI" below).
 
 ## Browser AI (optional)
+
+![Browser AI summary card](store-assets/screenshot-4-browser-ai.png)
 
 If your Chrome already has the built-in **Gemini Nano** model available
 locally (the same on-device LLM that powers Chrome's experimental AI
@@ -122,6 +127,14 @@ To load the in-tree extension (no build step needed):
 
 After updates, click **Reload** on the extension card.
 
+> **Heads up:** if during development you point Tab Recorder's "Recordings
+> folder" at your local clone of this repo (e.g. picking the repo root as
+> the granted directory), the extension will write `.webm` / `.txt` /
+> `.summary.md` files into dated subfolders inside the repo. Add a line
+> like `^/\d{4}-\d{2}-\d{2}/` to your **local** `.git/info/exclude` (or
+> `.gitignore` if you want to share the exclusion) to keep those out of
+> your status output.
+
 ### Vendored dependencies
 
 The Transformers.js bundle and ONNX Runtime Web WASM artifacts are vendored at
@@ -169,6 +182,28 @@ Tab-Recorder/
 ├── tests/               - vitest unit tests + helpers
 └── tools/               - standalone power-user utilities (optional)
 ```
+
+## Support our work
+
+Tab Recorder is built and maintained by a small AI research team
+alongside our student research programs. The extension itself is, and
+will stay, completely free — donations are voluntary, non-refundable,
+and don't unlock anything.
+
+If you'd like to chip in, the in-extension **Help fund student research**
+link (bottom of the panel) opens a support page with a copy/open-wallet
+button. For convenience, the Bitcoin address is also here:
+
+```
+3C8MP16nhPVEAPecFZ7tudSjDXkg2zVYEB
+```
+
+Please use the **Bitcoin network only**. Cryptocurrency transactions are
+irreversible — double-check the address before sending.
+
+Other ways to help: share Tab Recorder with anyone who needs local
+audio recording, leave a review on the Chrome Web Store, or report
+bugs / feature ideas as GitHub issues.
 
 ## License
 
