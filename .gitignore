@@ -7,6 +7,7 @@ coverage/
 .wasm-build/
 .claude/
 .opencode/
+.lean-ctx/
 CLAUDE.md
 build/
 test-results/

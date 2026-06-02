@@ -364,6 +364,16 @@ button:disabled {
   transition: color 120ms ease;
 }
 
+.support-link strong {
+  font-weight: 800;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.support-link:hover strong {
+  color: var(--accent);
+}
+
 .support-link:hover {
   color: var(--accent);
 }
@@ -634,14 +644,81 @@ button:disabled {
 }
 
 .recording-item {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg-elev);
-  padding: 14px 16px;
+  padding: 14px 44px 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   transition: border-color 120ms ease;
+}
+
+.recording-item.is-filtered-out {
+  display: none;
+}
+
+.recording-item-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.recording-item-delete:hover:not(:disabled) {
+  color: var(--tl-red-hot);
+  background: rgba(239, 35, 60, 0.1);
+  border-color: rgba(239, 35, 60, 0.4);
+}
+
+.recording-item-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.recordings-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.recordings-filter input[type="search"] {
+  flex: 1;
+  width: auto;
+  padding: 9px 12px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  border-radius: 10px;
+  background: rgba(5, 2, 3, 0.6);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.recordings-filter input[type="search"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.recordings-filter-count {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .recording-item:hover {

@@ -104,6 +104,14 @@ async function init() {
   // Best-effort detection; never throws and never triggers a model download.
   refreshBrowserAiAvailability().catch(() => {});
 
+  const filterInput = document.getElementById("recordings-filter");
+  if (filterInput) {
+    filterInput.addEventListener("input", () => {
+      recordingsFilter = filterInput.value.trim().toLowerCase();
+      applyRecordingsFilter();
+    });
+  }
+
   micSelect.addEventListener("change", () => onMicSelectChange(micSelect.value));
   micSelectLive.addEventListener("change", () => onMicSelectChange(micSelectLive.value));
 
@@ -878,6 +886,7 @@ function sleep(ms) {
 
 let cachedMergedSessions = [];
 let browserAiAvailable = false;
+let recordingsFilter = "";
 
 // Operations currently in flight (transcribe, MP3 convert). Tracked by the
 // session's fileName because that's stable even when a synthesized session
@@ -946,6 +955,32 @@ async function loadAndRenderSessions() {
   for (const session of cachedMergedSessions) {
     recordingsListEl.appendChild(renderSessionRow(session));
   }
+  applyRecordingsFilter();
+}
+
+function applyRecordingsFilter() {
+  if (!recordingsListEl) return;
+  const q = recordingsFilter;
+  const countEl = document.getElementById("recordings-filter-count");
+  if (!q) {
+    let total = 0;
+    for (const row of recordingsListEl.querySelectorAll(".recording-item")) {
+      row.classList.remove("is-filtered-out");
+      total++;
+    }
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+  let visible = 0;
+  let total = 0;
+  for (const row of recordingsListEl.querySelectorAll(".recording-item")) {
+    total++;
+    const blob = row.dataset.searchBlob || "";
+    const match = blob.includes(q);
+    row.classList.toggle("is-filtered-out", !match);
+    if (match) visible++;
+  }
+  if (countEl) countEl.textContent = `${visible} of ${total}`;
 }
 
 async function fetchStoredSessions() {
@@ -984,6 +1019,12 @@ function renderSessionRow(session) {
   const row = document.createElement("div");
   row.className = "recording-item";
   row.dataset.sessionId = session.id;
+  row.dataset.searchBlob = [
+    session.meetingLabel,
+    session.tabTitle,
+    session.description,
+    session.transcriptText,
+  ].filter(Boolean).join(" ").toLowerCase();
 
   const top = document.createElement("div");
   top.className = "recording-item-top";
@@ -1078,18 +1119,25 @@ function renderSessionRow(session) {
     actions.appendChild(summarizeBtn);
   }
 
+  row.appendChild(actions);
+
+  // Trashcan in the top-right corner of the row. Same data-action="delete"
+  // so the existing onRecordingsListClick handler picks it up unchanged.
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
-  deleteBtn.className = "row-action is-danger";
+  deleteBtn.className = "recording-item-delete";
   deleteBtn.dataset.action = "delete";
-  deleteBtn.textContent = "Delete";
+  deleteBtn.setAttribute("aria-label", "Delete recording");
+  deleteBtn.title = "Delete recording";
+  deleteBtn.innerHTML =
+    '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+      '<path fill="currentColor" d="M9 3a1 1 0 0 0-1 1v1H4.5a1 1 0 1 0 0 2H5l1.07 12.14A2 2 0 0 0 8.06 21h7.88a2 2 0 0 0 1.99-1.86L19 7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9zm1 2h4V4h-4v1zm-.5 5a.75.75 0 0 1 .75.75v7.5a.75.75 0 1 1-1.5 0v-7.5A.75.75 0 0 1 9.5 10zm5 0a.75.75 0 0 1 .75.75v7.5a.75.75 0 1 1-1.5 0v-7.5A.75.75 0 0 1 14.5 10z"/>' +
+    '</svg>';
   if (isInProgress) {
     deleteBtn.disabled = true;
     deleteBtn.title = "An operation is already running on this recording.";
   }
-  actions.appendChild(deleteBtn);
-
-  row.appendChild(actions);
+  row.appendChild(deleteBtn);
 
   const progress = document.createElement("div");
   progress.className = "recording-item-progress hidden";
@@ -1423,21 +1471,11 @@ function formatSessionDate(ts) {
   if (!ts) return "";
   const date = new Date(Number(ts));
   if (Number.isNaN(date.getTime())) return "";
-  const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (sameDay) return `Today, ${time}`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const isYesterday =
-    date.getFullYear() === yesterday.getFullYear() &&
-    date.getMonth() === yesterday.getMonth() &&
-    date.getDate() === yesterday.getDate();
-  if (isYesterday) return `Yesterday, ${time}`;
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
 }
 
 function formatDurationHuman(ms) {
