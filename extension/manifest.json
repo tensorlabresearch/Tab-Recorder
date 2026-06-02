@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Tab Recorder",
   "version": "1.6.0",
-  "description": "Audio-first tab recorder with local transcription and MP3 export.",
+  "description": "Unobtrusive tab recorder and transcriber — local-only, no cloud.",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
