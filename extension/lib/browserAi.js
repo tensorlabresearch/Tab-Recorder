@@ -16,6 +16,14 @@ const MODEL_LABEL = "gemini-nano";
 const MAX_CHUNK_CHARS = 12_000;
 const MAX_CHUNKS = 20;
 
+// Chrome's LanguageModel API logs a warning unless input/output languages
+// are declared. Transcripts vary, but our system prompts force English
+// output (JSON / bullets), so we attest English here.
+const SESSION_LANGS = {
+  expectedInputs: [{ type: "text", languages: ["en"] }],
+  expectedOutputs: [{ type: "text", languages: ["en"] }],
+};
+
 const SYSTEM_FINAL = `You are a precise summarizer of audio recording transcripts.
 Output STRICT JSON with exactly two keys:
 - "description": one plain sentence under 20 words capturing what the recording is about. No quotes, no leading phrases like "This recording is about". Just the sentence.
@@ -164,7 +172,7 @@ export async function summarizeAndDescribe(transcript, opts = {}) {
 
   // Short transcript: single structured call.
   if (usedChunks.length === 1) {
-    const session = await api.create({ systemPrompt: SYSTEM_FINAL });
+    const session = await api.create({ systemPrompt: SYSTEM_FINAL, ...SESSION_LANGS });
     try {
       return await promptStructured(session, usedChunks[0]);
     } finally {
@@ -173,7 +181,7 @@ export async function summarizeAndDescribe(transcript, opts = {}) {
   }
 
   // Long transcript: map (chunk → bullets), then reduce (bullets → JSON).
-  const chunkSession = await api.create({ systemPrompt: SYSTEM_CHUNK });
+  const chunkSession = await api.create({ systemPrompt: SYSTEM_CHUNK, ...SESSION_LANGS });
   const partials = [];
   try {
     for (const chunk of usedChunks) {
@@ -185,7 +193,7 @@ export async function summarizeAndDescribe(transcript, opts = {}) {
   }
 
   const combined = partials.join("\n");
-  const finalSession = await api.create({ systemPrompt: SYSTEM_FINAL });
+  const finalSession = await api.create({ systemPrompt: SYSTEM_FINAL, ...SESSION_LANGS });
   try {
     const result = await promptStructured(finalSession, combined);
     if (tooLong && result.description) {
