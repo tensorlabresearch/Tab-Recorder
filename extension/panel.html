@@ -47,7 +47,7 @@
           <button id="start-btn" class="primary">Start Recording</button>
           <button id="open-settings-btn" class="ghost">Settings</button>
           <a id="open-support-link" class="support-link" href="#">
-            Help fund student research
+            <strong>Help fund student research</strong>
           </a>
         </div>
       </section>
@@ -101,6 +101,11 @@
             <button id="open-folder-btn" class="text-button" type="button">Open Folder</button>
             <button id="refresh-recordings-btn" class="text-button" type="button">Refresh</button>
           </div>
+        </div>
+        <div class="recordings-filter">
+          <input id="recordings-filter" type="search" autocomplete="off"
+                 placeholder="Filter by title, description, or transcript…" />
+          <span id="recordings-filter-count" class="recordings-filter-count"></span>
         </div>
         <div id="recordings-list" class="recordings-list">
           <div class="recordings-empty">No recordings yet.</div>
