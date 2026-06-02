@@ -4,10 +4,15 @@ export function pathKey(fileName) {
 }
 
 export function synthesizeSessionFromFs(fsFile) {
-  const baseLabel = String(fsFile?.baseName || "")
-    .replace(/_\d{2}-\d{2}$/, "")
-    .replace(/[-_]/g, " ")
-    .trim() || "Recording";
+  const rawBase = String(fsFile?.baseName || "")
+    .replace(/_\d{2}-\d{2}$/, "");
+  // Folder names derived from the default timestamp label collapse to the
+  // shape "YYYY-MM-DD-HHMM" on disk. Restore them to "YYYY-MM-DD HH:MM"
+  // instead of mangling every dash into a space.
+  const tsMatch = rawBase.match(/^(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})$/);
+  const baseLabel = tsMatch
+    ? `${tsMatch[1]} ${tsMatch[2]}:${tsMatch[3]}`
+    : rawBase.replace(/[-_]/g, " ").trim() || "Recording";
   return {
     id: `fs-${String(fsFile?.path || "").replace(/[^a-z0-9]/gi, "")}`,
     meetingLabel: baseLabel,
