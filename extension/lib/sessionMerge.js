@@ -23,7 +23,9 @@ export function synthesizeSessionFromFs(fsFile) {
     transcriptWords: [],
     mp3DownloadId: null,
     mp3FileName: fsFile?.mp3Path || "",
-    _fsTxtPath: fsFile?.txtPath || null
+    _fsTxtPath: fsFile?.txtPath || null,
+    _fsSummaryPath: fsFile?.summaryPath || null,
+    description: fsFile?.description || ""
   };
 }
 
@@ -64,6 +66,8 @@ export function mergeSessionSources(stored = [], downloadOrphans = [], fsFiles =
       const existing = map.get(k);
       if (fsFile.mp3Path && !existing.mp3FileName) existing.mp3FileName = fsFile.mp3Path;
       if (fsFile.txtPath && !existing.transcriptText) existing._fsTxtPath = fsFile.txtPath;
+      if (fsFile.summaryPath) existing._fsSummaryPath = fsFile.summaryPath;
+      if (fsFile.description && !existing.description) existing.description = fsFile.description;
       if (fsFile.lastModified && !existing.startedAt) existing.startedAt = fsFile.lastModified;
       continue;
     }

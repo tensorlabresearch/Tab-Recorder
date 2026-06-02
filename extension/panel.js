@@ -14,6 +14,13 @@ import {
 } from "./lib/audioFs.js";
 import { getSelectedModelId, getAutoTranscribePreference } from "./lib/whisperModel.js";
 import { mergeSessionSources } from "./lib/sessionMerge.js";
+import {
+  isAvailable as isBrowserAiAvailable,
+  summarizeAndDescribe,
+  getAutoSummarizePreference,
+  BROWSER_AI
+} from "./lib/browserAi.js";
+import { serializeSummary } from "./lib/summaryFile.js";
 
 const statusEl = document.getElementById("status");
 const recordingStatusEl = document.getElementById("recording-status");
@@ -93,6 +100,9 @@ async function init() {
 
   await populateMicSelectors(stored?.[MIC_DEVICE_ID_KEY]);
   hideLoadingSplash();
+
+  // Best-effort detection; never throws and never triggers a model download.
+  refreshBrowserAiAvailability().catch(() => {});
 
   micSelect.addEventListener("change", () => onMicSelectChange(micSelect.value));
   micSelectLive.addEventListener("change", () => onMicSelectChange(micSelectLive.value));
@@ -867,6 +877,7 @@ function sleep(ms) {
 }
 
 let cachedMergedSessions = [];
+let browserAiAvailable = false;
 
 // Operations currently in flight (transcribe, MP3 convert). Tracked by the
 // session's fileName because that's stable even when a synthesized session
@@ -982,6 +993,13 @@ function renderSessionRow(session) {
   title.textContent = session.meetingLabel || session.tabTitle || "Untitled";
   top.appendChild(title);
 
+  if (session.description) {
+    const desc = document.createElement("div");
+    desc.className = "recording-item-description";
+    desc.textContent = session.description;
+    top.appendChild(desc);
+  }
+
   const meta = document.createElement("div");
   meta.className = "recording-item-meta";
   const metaParts = [];
@@ -1043,6 +1061,21 @@ function renderSessionRow(session) {
     copyBtn.dataset.action = "copy-transcript";
     copyBtn.textContent = "Copy Transcript";
     actions.appendChild(copyBtn);
+  }
+
+  if (browserAiAvailable && hasTranscript) {
+    const summarizeBtn = document.createElement("button");
+    summarizeBtn.type = "button";
+    summarizeBtn.className = "row-action";
+    summarizeBtn.dataset.action = "summarize";
+    summarizeBtn.textContent = isInProgress
+      ? "Working..."
+      : session._fsSummaryPath ? "Re-summarize" : "Summarize";
+    if (isInProgress) {
+      summarizeBtn.disabled = true;
+      summarizeBtn.title = "An operation is already running on this recording.";
+    }
+    actions.appendChild(summarizeBtn);
   }
 
   const deleteBtn = document.createElement("button");
@@ -1229,7 +1262,7 @@ async function onRecordingsListClick(event) {
       try {
         const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" });
         if (handle && session?.fileName) {
-          await removeRecordingArtifact(handle, session.fileName, { extensions: ["webm", "mp3", "txt"] });
+          await removeRecordingArtifact(handle, session.fileName, { extensions: ["webm", "mp3", "txt", "summary.md"] });
         }
       } catch (_) {}
       await chrome.runtime.sendMessage({ type: "delete-session", sessionId });
@@ -1281,6 +1314,90 @@ async function onRecordingsListClick(event) {
     }
     await transcribeSession(session, button);
     return;
+  }
+
+  if (action === "summarize") {
+    const session = await findSession(sessionId);
+    if (!session) {
+      statusEl.textContent = "Recording not found.";
+      return;
+    }
+    await summarizeSession(session, button);
+    return;
+  }
+}
+
+async function refreshBrowserAiAvailability() {
+  try {
+    browserAiAvailable = await isBrowserAiAvailable();
+  } catch (_) {
+    browserAiAvailable = false;
+  }
+}
+
+async function summarizeSession(session, button) {
+  if (!browserAiAvailable) {
+    statusEl.textContent = "Browser AI not available on this device.";
+    return;
+  }
+  if (inProgressFileNames.has(session.fileName)) {
+    statusEl.textContent = "Another operation is already running on this recording.";
+    return;
+  }
+
+  // Load transcript text — prefer in-memory, fall back to the FS sidecar.
+  let transcript = session.transcriptText || "";
+  if (!transcript && session._fsTxtPath) {
+    try {
+      const handle = await getRecordingsDirectoryHandle();
+      if (handle) transcript = (await readArtifactText(handle, session._fsTxtPath)) || "";
+    } catch (_) {}
+  }
+  if (!transcript) {
+    statusEl.textContent = "No transcript on this recording yet.";
+    return;
+  }
+
+  const row = button.closest(".recording-item");
+  startOperation(session.fileName);
+  if (row) {
+    row.classList.add("is-working");
+    setRowProgress(row, { label: "Summarizing with Gemini Nano...", spinner: true });
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Working...";
+  }
+
+  try {
+    const { description, summary } = await summarizeAndDescribe(transcript);
+    if (!summary && !description) {
+      throw new Error("Empty response from on-device model");
+    }
+
+    const body = serializeSummary({
+      description,
+      summary,
+      model: BROWSER_AI.MODEL_LABEL,
+      generatedAt: new Date()
+    });
+    const blob = new Blob([body], { type: "text/markdown" });
+
+    const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" });
+    if (!handle) throw new Error("Recordings folder not granted.");
+    await writeRecordingArtifact(handle, session.fileName, blob, { extension: "summary.md" });
+
+    statusEl.textContent = "Summary saved next to the recording.";
+    await loadAndRenderSessions();
+  } catch (error) {
+    statusEl.textContent = `Summarize failed: ${error?.message || error}`;
+    if (row) setRowProgress(row, { visible: false });
+    if (button) {
+      button.disabled = false;
+      button.textContent = session._fsSummaryPath ? "Re-summarize" : "Summarize";
+    }
+  } finally {
+    endOperation(session.fileName);
   }
 }
 
@@ -1664,7 +1781,42 @@ async function transcribeSessionImpl(session, button) {
 
   setRowProgress(row, { label: "Done", spinner: false });
   statusEl.textContent = `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).`;
+
+  await maybeAutoSummarize(session, result.text, handle, row);
+
   await loadAndRenderSessions();
+}
+
+async function maybeAutoSummarize(session, transcriptText, handle, row) {
+  if (!browserAiAvailable) return;
+  let enabled = false;
+  try {
+    enabled = await getAutoSummarizePreference();
+  } catch (_) {}
+  if (!enabled) return;
+  if (!transcriptText || !transcriptText.trim()) return;
+
+  try {
+    if (row) setRowProgress(row, { label: "Summarizing with Gemini Nano...", spinner: true });
+    const { description, summary } = await summarizeAndDescribe(transcriptText);
+    if (!description && !summary) return;
+    const body = serializeSummary({
+      description,
+      summary,
+      model: BROWSER_AI.MODEL_LABEL,
+      generatedAt: new Date()
+    });
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([body], { type: "text/markdown" }),
+      { extension: "summary.md" }
+    );
+    statusEl.textContent = "Transcript saved. Summary saved next to the recording.";
+  } catch (error) {
+    // Auto-summary must not poison the happy transcription path.
+    console.warn("[panel] auto-summarize failed", error);
+  }
 }
 
 async function ensureStoredSessionId(session, durationMs) {

@@ -274,16 +274,40 @@ export async function enumerateRecordings(handle) {
   const out = [];
   const mp3PathsByBase = new Map();
   const txtPathsByBase = new Map();
+  const summaryByBase = new Map();
 
   await walkDirectory(handle, [], async (file, segments) => {
     const name = file.name;
     const lower = name.toLowerCase();
+    const fullPath = [handle.name || "Tab Recorder", ...segments, name].join("/");
+
+    // Handle the double-suffix sidecar first so it doesn't get parsed
+    // as a plain .md file.
+    if (lower.endsWith(".summary.md")) {
+      const sumBase = name.slice(0, -".summary.md".length);
+      const sumBaseKey = [...segments, sumBase].join("/");
+      let description = "";
+      try {
+        const f = await file.getFile();
+        const text = await f.text();
+        const match = text.match(/^description:\s*(.+?)\s*$/m);
+        if (match) {
+          let raw = match[1];
+          if (raw.startsWith('"') && raw.endsWith('"')) {
+            raw = raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+          }
+          description = raw;
+        }
+      } catch (_) {}
+      summaryByBase.set(sumBaseKey, { path: fullPath, description });
+      return;
+    }
+
     const dotIdx = lower.lastIndexOf(".");
     if (dotIdx < 0) return;
     const ext = lower.slice(dotIdx + 1);
     const base = name.slice(0, dotIdx);
     const baseKey = [...segments, base].join("/");
-    const fullPath = [handle.name || "Tab Recorder", ...segments, name].join("/");
 
     if (ext === "webm") {
       const f = await file.getFile().catch(() => null);
@@ -296,9 +320,9 @@ export async function enumerateRecordings(handle) {
         lastModified: f ? f.lastModified : 0
       });
     } else if (ext === "mp3") {
-      mp3PathsByBase.set(baseKey, [handle.name || "Tab Recorder", ...segments, name].join("/"));
+      mp3PathsByBase.set(baseKey, fullPath);
     } else if (ext === "txt") {
-      txtPathsByBase.set(baseKey, [handle.name || "Tab Recorder", ...segments, name].join("/"));
+      txtPathsByBase.set(baseKey, fullPath);
     }
   });
 
@@ -308,6 +332,9 @@ export async function enumerateRecordings(handle) {
     const baseKey = [...segments, entry.baseName].join("/");
     entry.mp3Path = mp3PathsByBase.get(baseKey) || null;
     entry.txtPath = txtPathsByBase.get(baseKey) || null;
+    const sum = summaryByBase.get(baseKey);
+    entry.summaryPath = sum?.path || null;
+    entry.description = sum?.description || "";
   }
 
   out.sort((a, b) => Number(b.lastModified || 0) - Number(a.lastModified || 0));
