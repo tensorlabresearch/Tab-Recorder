@@ -109,6 +109,50 @@
       </section>
 
       <section class="card">
+        <h2>Speaker Detection</h2>
+        <p class="hint">
+          Optional speaker diarization, also fully local. Uses WavLM
+          (Microsoft, Apache-2.0) through Transformers.js to produce a
+          speaker embedding per utterance, then clusters embeddings to
+          label "Speaker 1", "Speaker 2", etc. in the transcript. The
+          model is downloaded on demand and cached by the browser.
+        </p>
+
+        <div class="form-group">
+          <label for="speaker-model-select">Model</label>
+          <select id="speaker-model-select"></select>
+        </div>
+
+        <div class="model-status">
+          <div class="model-status-row">
+            <span class="model-label">Engine</span>
+            <span id="speaker-engine-state" class="model-value">Detecting...</span>
+          </div>
+          <div class="model-status-row">
+            <span class="model-label">Cached</span>
+            <span id="speaker-cache-state" class="model-value">Checking...</span>
+          </div>
+        </div>
+
+        <div id="speaker-progress-wrap" class="progress hidden">
+          <div class="progress-bar">
+            <div id="speaker-progress-fill" class="progress-fill"></div>
+          </div>
+          <div id="speaker-progress-text" class="progress-text">0%</div>
+        </div>
+
+        <div class="folder-actions">
+          <button id="speaker-download-btn" class="primary">Download / Warm Up Model</button>
+          <button id="speaker-clear-btn" class="danger">Clear Model Cache</button>
+        </div>
+
+        <p class="help-text">
+          The clear-cache button above also clears this model (both use
+          the same browser cache namespace).
+        </p>
+      </section>
+
+      <section class="card">
         <h2>About</h2>
         <p class="hint">
           MP3 conversion uses
