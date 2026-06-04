@@ -27,6 +27,7 @@ import {
   isAvailable as isBrowserAiAvailable,
   summarizeAndDescribe,
   getAutoSummarizePreference,
+  getSummaryHeadChars,
   BROWSER_AI
 } from "./lib/browserAi.js";
 import { serializeSummary } from "./lib/summaryFile.js";
@@ -1174,23 +1175,17 @@ function renderSessionRow(session) {
     actions.appendChild(mp3Btn);
   }
 
-  if (session.transcriptText || session._fsTxtPath) {
-    const copyBtn = document.createElement("button");
-    copyBtn.type = "button";
-    copyBtn.className = "row-action";
-    copyBtn.dataset.action = "copy-transcript";
-    copyBtn.textContent = "Copy Transcript";
-    actions.appendChild(copyBtn);
-  }
+  // The transcript icon (a badge in the meta row) doubles as the copy-to-
+  // clipboard control, so there is no separate "Copy Transcript" button.
 
-  if (browserAiAvailable && hasTranscript) {
+  // Show the Summarize button only until a summary exists; once it does, the
+  // summary icon badge becomes the re-summarize control.
+  if (browserAiAvailable && hasTranscript && !session._fsSummaryPath) {
     const summarizeBtn = document.createElement("button");
     summarizeBtn.type = "button";
     summarizeBtn.className = "row-action";
     summarizeBtn.dataset.action = "summarize";
-    summarizeBtn.textContent = isInProgress
-      ? "Working..."
-      : session._fsSummaryPath ? "Re-summarize" : "Summarize";
+    summarizeBtn.textContent = isInProgress ? "Working..." : "Summarize";
     if (isInProgress) {
       summarizeBtn.disabled = true;
       summarizeBtn.title = "An operation is already running on this recording.";
@@ -1369,26 +1364,51 @@ const BADGE_ICONS = {
     '<path d="M9 18V5l12-2v13"/>' +
     '<circle cx="6" cy="18" r="3"/>' +
     '<circle cx="18" cy="16" r="3"/>' +
+    "</svg>",
+  // Sparkles — represents a generated AI summary.
+  summary:
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5 10.1 7.6z"/>' +
+    '<path d="M19 14l.7 1.8L21.5 16.5 19.7 17.2 19 19l-.7-1.8L16.5 16.5 18.3 15.8z"/>' +
     "</svg>"
 };
 
-function makeBadge(kind, label) {
-  const span = document.createElement("span");
-  span.className = `recording-badge recording-badge-${kind}`;
-  span.title = label;
-  span.setAttribute("aria-label", label);
-  span.innerHTML = BADGE_ICONS[kind] || "";
-  return span;
+// A badge is an inert <span> by default. When `action` is supplied it becomes
+// a real <button data-action> so the existing onRecordingsListClick delegate
+// handles it — the icon doubles as a button (copy transcript, reveal MP3,
+// re-summarize, etc.).
+function makeBadge(kind, label, action) {
+  const el = document.createElement(action ? "button" : "span");
+  el.className = `recording-badge recording-badge-${kind}${action ? " is-action" : ""}`;
+  el.title = label;
+  el.setAttribute("aria-label", label);
+  if (action) {
+    el.type = "button";
+    el.dataset.action = action;
+  }
+  el.innerHTML = BADGE_ICONS[kind] || "";
+  return el;
 }
 
 function makeBadgesForSession(session) {
   const hasTranscript = !!(session.transcriptText || session._fsTxtPath);
   const hasMp3 = !!session.mp3FileName;
-  if (!hasTranscript && !hasMp3) return null;
+  const hasSummary = !!session._fsSummaryPath;
+  if (!hasTranscript && !hasMp3 && !hasSummary) return null;
   const wrap = document.createElement("span");
   wrap.className = "recording-badges";
-  if (hasTranscript) wrap.appendChild(makeBadge("transcript", "Transcript saved"));
-  if (hasMp3) wrap.appendChild(makeBadge("mp3", "MP3 saved"));
+  // Transcript icon doubles as a copy-to-clipboard button.
+  if (hasTranscript) {
+    wrap.appendChild(makeBadge("transcript", "Copy transcript to clipboard", "copy-transcript"));
+  }
+  // Summary icon indicates a summary exists and re-summarizes when clicked.
+  if (hasSummary) {
+    wrap.appendChild(makeBadge("summary", "Summary saved — click to re-summarize", "summarize"));
+  }
+  // MP3 note opens the OS file manager at the recording's folder.
+  if (hasMp3) {
+    wrap.appendChild(makeBadge("mp3", "Show MP3 in file manager", "reveal-mp3"));
+  }
   return wrap;
 }
 
@@ -1439,6 +1459,16 @@ async function onRecordingsListClick(event) {
     } catch (error) {
       statusEl.textContent = `Copy failed: ${error?.message || error}`;
     }
+    return;
+  }
+
+  if (action === "reveal-mp3") {
+    const session = await findSession(sessionId);
+    if (!session) {
+      statusEl.textContent = "Recording not found.";
+      return;
+    }
+    await revealRecordingInFolder(session);
     return;
   }
 
@@ -1526,7 +1556,8 @@ async function summarizeSession(session, button) {
   }
 
   try {
-    const { description, summary } = await summarizeAndDescribe(transcript);
+    const headChars = await getSummaryHeadChars();
+    const { description, summary } = await summarizeAndDescribe(transcript, { headChars });
     if (!summary && !description) {
       throw new Error("Empty response from on-device model");
     }
@@ -2187,7 +2218,8 @@ async function maybeAutoSummarize(session, transcriptText, handle, row) {
 
   try {
     if (row) setRowProgress(row, { label: "Summarizing with Gemini Nano...", spinner: true });
-    const { description, summary } = await summarizeAndDescribe(transcriptText);
+    const headChars = await getSummaryHeadChars();
+    const { description, summary } = await summarizeAndDescribe(transcriptText, { headChars });
     if (!description && !summary) return;
     const body = serializeSummary({
       description,
@@ -2347,6 +2379,48 @@ async function openRecordingsFolder() {
       return;
     }
     chrome.downloads.showDefaultFolder();
+  } catch (error) {
+    statusEl.textContent = `Could not open folder: ${error?.message || error}`;
+  }
+}
+
+async function revealRecordingInFolder(session) {
+  // MP3 and other sidecars are written to the recordings folder via the File
+  // System Access API, which has no "reveal in OS file manager" capability.
+  // The achievable best is to open the folder holding this recording's files
+  // through chrome.downloads.show — try the MP3 by name, then the original
+  // webm (by tracked downloadId, then by name), falling back to the default
+  // downloads folder.
+  const base = (name) => String(name || "").split(/[\\/]/).pop() || "";
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const findDownload = async (fileName) => {
+    const b = base(fileName);
+    if (!b) return null;
+    const matches = await chrome.downloads
+      .search({ filenameRegex: escapeRe(b) + "$", exists: true, orderBy: ["-startTime"], limit: 1 })
+      .catch(() => []);
+    return Array.isArray(matches) && matches.length ? matches[0] : null;
+  };
+  try {
+    const mp3Match = await findDownload(session.mp3FileName);
+    if (mp3Match) {
+      chrome.downloads.show(mp3Match.id);
+      statusEl.textContent = "Opened the MP3's folder in your file manager.";
+      return;
+    }
+    if (Number.isInteger(session.downloadId)) {
+      chrome.downloads.show(session.downloadId);
+      statusEl.textContent = "Opened the recording's folder in your file manager.";
+      return;
+    }
+    const webmMatch = await findDownload(session.fileName);
+    if (webmMatch) {
+      chrome.downloads.show(webmMatch.id);
+      statusEl.textContent = "Opened the recording's folder in your file manager.";
+      return;
+    }
+    chrome.downloads.showDefaultFolder();
+    statusEl.textContent = "Opened your downloads folder (exact MP3 location isn't available to the browser).";
   } catch (error) {
     statusEl.textContent = `Could not open folder: ${error?.message || error}`;
   }
