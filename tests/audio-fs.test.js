@@ -274,4 +274,39 @@ describe("enumerateRecordings", () => {
     const entries = await mod.enumerateRecordings(root);
     expect(entries).toEqual([]);
   });
+
+  it("surfaces the .segments.json sidecar without claiming the .txt slot", async () => {
+    const root = makeFakeRoot("Tab Recorder");
+    await root._addFile("2026-06-04/audio.webm", "...");
+    await root._addFile("2026-06-04/audio.segments.json", "{}");
+    const entries = await mod.enumerateRecordings(root);
+    const audio = entries.find((e) => e.baseName === "audio");
+    expect(audio.segmentsJsonPath).toMatch(/audio\.segments\.json$/);
+    // Must not also be reported as a plain .txt or as the json's own .webm.
+    expect(audio.txtPath).toBeNull();
+  });
+
+  it("surfaces the .diarized.txt and .diarized.json sidecars", async () => {
+    const root = makeFakeRoot("Tab Recorder");
+    await root._addFile("2026-06-04/audio.webm", "...");
+    await root._addFile("2026-06-04/audio.diarized.txt", "Speaker 1: hi");
+    await root._addFile("2026-06-04/audio.diarized.json", "{}");
+    const entries = await mod.enumerateRecordings(root);
+    const audio = entries.find((e) => e.baseName === "audio");
+    expect(audio.diarizedTxtPath).toMatch(/audio\.diarized\.txt$/);
+    expect(audio.diarizedJsonPath).toMatch(/audio\.diarized\.json$/);
+    // The .diarized.txt should not be mis-attributed to the plain .txt slot.
+    expect(audio.txtPath).toBeNull();
+  });
+
+  it("keeps the plain .txt sidecar separate from .diarized.txt", async () => {
+    const root = makeFakeRoot("Tab Recorder");
+    await root._addFile("2026-06-04/audio.webm", "...");
+    await root._addFile("2026-06-04/audio.txt", "plain transcript");
+    await root._addFile("2026-06-04/audio.diarized.txt", "Speaker 1: hi");
+    const entries = await mod.enumerateRecordings(root);
+    const audio = entries.find((e) => e.baseName === "audio");
+    expect(audio.txtPath).toMatch(/audio\.txt$/);
+    expect(audio.diarizedTxtPath).toMatch(/audio\.diarized\.txt$/);
+  });
 });

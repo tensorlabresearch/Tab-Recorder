@@ -56,6 +56,47 @@ describe("summary sidecar propagation", () => {
   });
 });
 
+describe("diarization sidecar propagation", () => {
+  it("synthesizeSessionFromFs carries segments / diarized paths through", () => {
+    const out = synthesizeSessionFromFs({
+      baseName: "foo",
+      path: "Tab Recorder/2026-06-04/foo.webm",
+      segmentsJsonPath: "Tab Recorder/2026-06-04/foo.segments.json",
+      diarizedTxtPath: "Tab Recorder/2026-06-04/foo.diarized.txt",
+      diarizedJsonPath: "Tab Recorder/2026-06-04/foo.diarized.json"
+    });
+    expect(out._fsSegmentsJsonPath).toBe("Tab Recorder/2026-06-04/foo.segments.json");
+    expect(out._fsDiarizedTxtPath).toBe("Tab Recorder/2026-06-04/foo.diarized.txt");
+    expect(out._fsDiarizedJsonPath).toBe("Tab Recorder/2026-06-04/foo.diarized.json");
+  });
+
+  it("synthesizeSessionFromFs defaults the three diarization paths to null", () => {
+    const out = synthesizeSessionFromFs({
+      baseName: "foo",
+      path: "Tab Recorder/foo.webm"
+    });
+    expect(out._fsSegmentsJsonPath).toBeNull();
+    expect(out._fsDiarizedTxtPath).toBeNull();
+    expect(out._fsDiarizedJsonPath).toBeNull();
+  });
+
+  it("mergeSessionSources augments stored sessions with diarization sidecars", () => {
+    const stored = [{ id: "s1", fileName: "Tab Recorder/foo.webm" }];
+    const fs = [{
+      path: "Tab Recorder/foo.webm",
+      baseName: "foo",
+      segmentsJsonPath: "Tab Recorder/foo.segments.json",
+      diarizedTxtPath: "Tab Recorder/foo.diarized.txt",
+      diarizedJsonPath: "Tab Recorder/foo.diarized.json"
+    }];
+    const out = mergeSessionSources(stored, [], fs);
+    expect(out).toHaveLength(1);
+    expect(out[0]._fsSegmentsJsonPath).toBe("Tab Recorder/foo.segments.json");
+    expect(out[0]._fsDiarizedTxtPath).toBe("Tab Recorder/foo.diarized.txt");
+    expect(out[0]._fsDiarizedJsonPath).toBe("Tab Recorder/foo.diarized.json");
+  });
+});
+
 describe("pathKey", () => {
   it("returns null for missing input", () => {
     expect(pathKey(null)).toBeNull();
