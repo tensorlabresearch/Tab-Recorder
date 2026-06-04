@@ -13,7 +13,15 @@ import {
   readArtifactText
 } from "./lib/audioFs.js";
 import { getSelectedModelId, getAutoTranscribePreference } from "./lib/whisperModel.js";
+import {
+  getSelectedSpeakerEmbedModelId,
+  getAutoDiarizePreference,
+  isSpeakerEmbedModelCached
+} from "./lib/speakerEmbedModel.js";
 import { mergeSessionSources } from "./lib/sessionMerge.js";
+import { diarize } from "./lib/diarize.js";
+import { formatDiarizedText, formatDiarizedJson } from "./lib/diarizedTranscript.js";
+import { openDiarizationWorker } from "./lib/diarizationWorkerClient.js";
 import {
   isAvailable as isBrowserAiAvailable,
   summarizeAndDescribe,
@@ -1178,6 +1186,24 @@ function renderSessionRow(session) {
     actions.appendChild(summarizeBtn);
   }
 
+  // Diarize requires Whisper segments — we only show it when the segments
+  // sidecar is available on disk (written by transcribeSessionImpl). Older
+  // recordings without a .segments.json need to be re-transcribed first.
+  if (session._fsSegmentsJsonPath) {
+    const diarizeBtn = document.createElement("button");
+    diarizeBtn.type = "button";
+    diarizeBtn.className = "row-action";
+    diarizeBtn.dataset.action = "diarize";
+    diarizeBtn.textContent = isInProgress
+      ? "Working..."
+      : session._fsDiarizedTxtPath ? "Re-diarize" : "Diarize";
+    if (isInProgress) {
+      diarizeBtn.disabled = true;
+      diarizeBtn.title = "An operation is already running on this recording.";
+    }
+    actions.appendChild(diarizeBtn);
+  }
+
   row.appendChild(actions);
 
   // Trashcan in the top-right corner of the row. Same data-action="delete"
@@ -1432,6 +1458,16 @@ async function onRecordingsListClick(event) {
     await summarizeSession(session, button);
     return;
   }
+
+  if (action === "diarize") {
+    const session = await findSession(sessionId);
+    if (!session) {
+      statusEl.textContent = "Recording not found.";
+      return;
+    }
+    await diarizeSession(session, button);
+    return;
+  }
 }
 
 async function refreshBrowserAiAvailability() {
@@ -1504,6 +1540,131 @@ async function summarizeSession(session, button) {
       button.textContent = session._fsSummaryPath ? "Re-summarize" : "Summarize";
     }
   } finally {
+    endOperation(session.fileName);
+  }
+}
+
+async function diarizeSession(session, button) {
+  if (inProgressFileNames.has(session.fileName)) {
+    statusEl.textContent = "Another operation is already running on this recording.";
+    return;
+  }
+  if (!session._fsSegmentsJsonPath) {
+    statusEl.textContent =
+      "No Whisper segments saved for this recording — re-transcribe to enable diarization.";
+    return;
+  }
+
+  const row = button?.closest(".recording-item");
+  const originalLabel = button?.textContent;
+  startOperation(session.fileName);
+  if (row) {
+    row.classList.add("is-working");
+    setRowProgress(row, { label: "Loading audio for diarization", spinner: true });
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Working...";
+  }
+
+  let client = null;
+  try {
+    const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" });
+    if (!handle) throw new Error("Recordings folder not granted.");
+
+    const segmentsText = await readArtifactText(handle, session._fsSegmentsJsonPath);
+    if (!segmentsText) throw new Error("Could not read segments sidecar.");
+    let segments;
+    try {
+      const parsed = JSON.parse(segmentsText);
+      segments = Array.isArray(parsed?.segments) ? parsed.segments : [];
+    } catch (error) {
+      throw new Error(`Segments sidecar is not valid JSON: ${error?.message || error}`);
+    }
+    if (segments.length < 2) {
+      throw new Error("Need at least two transcribed segments to detect speakers.");
+    }
+
+    setRowProgress(row, { label: "Decoding audio" });
+    const file = await readRecordingFile(handle, session.fileName);
+    const audioCtx = new AudioContext();
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    audioCtx.close();
+    const pcm16k = await resampleToMono16k(audioBuffer);
+
+    setRowProgress(row, { label: "Loading speaker-embedding model" });
+    const modelId = await getSelectedSpeakerEmbedModelId();
+    client = await openDiarizationWorker({
+      modelId,
+      onStage: (stage) => setRowProgress(row, { label: stage }),
+      onDownloadProgress: ({ file: fileName, loaded, total, progress }) => {
+        const pct = Number(progress) || (total ? Math.round((loaded / total) * 100) : 0);
+        const label = fileName
+          ? `Downloading ${fileName} (${pct}%)`
+          : `Downloading speaker model (${pct}%)`;
+        setRowProgress(row, { label });
+      },
+      onEngine: (device) => {
+        setRowProgress(row, {
+          label: device === "webgpu" ? "Embedding on WebGPU" : "Embedding on CPU"
+        });
+      }
+    });
+
+    setRowProgress(row, { label: "Embedding utterances (0/?)" });
+    const result = await diarize({
+      segments,
+      pcm16k,
+      embedFn: (slice) => client.embed(slice),
+      onUtteranceProgress: (current, total) => {
+        setRowProgress(row, { label: `Embedding utterances (${current}/${total})` });
+      }
+    });
+
+    if (result.skipped === "too-few-utterances") {
+      statusEl.textContent =
+        "Diarization skipped — fewer than two utterances survived segmentation.";
+      setRowProgress(row, { visible: false });
+      return;
+    }
+
+    setRowProgress(row, { label: "Saving diarized transcript" });
+    const txt = formatDiarizedText(result.utterances);
+    const json = formatDiarizedJson(result.utterances, result.speakerCount, {
+      sourceFile: session.fileName,
+      modelId,
+      device: client.device,
+      generatedAt: new Date().toISOString()
+    });
+
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([txt], { type: "text/plain" }),
+      { extension: "diarized.txt" }
+    );
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([json], { type: "application/json" }),
+      { extension: "diarized.json" }
+    );
+
+    statusEl.textContent =
+      `Diarized transcript saved (${result.speakerCount} speaker${result.speakerCount === 1 ? "" : "s"}, ${result.utterances.length} utterances).`;
+    setRowProgress(row, { label: "Done", spinner: false });
+    await loadAndRenderSessions();
+  } catch (error) {
+    console.error("[panel] diarization failed", error);
+    statusEl.textContent = `Diarize failed: ${error?.message || error}`;
+    if (row) setRowProgress(row, { visible: false });
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel || (session._fsDiarizedTxtPath ? "Re-diarize" : "Diarize");
+    }
+  } finally {
+    if (client) client.terminate();
     endOperation(session.fileName);
   }
 }
@@ -1862,6 +2023,24 @@ async function transcribeSessionImpl(session, button) {
     return;
   }
 
+  // Also persist Whisper segments as a sidecar so a later "Diarize" click
+  // can run without re-transcribing. Non-fatal on failure.
+  try {
+    const segmentsPayload = JSON.stringify(
+      { version: 1, segments: result.segments || [] },
+      null,
+      2
+    );
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([segmentsPayload], { type: "application/json" }),
+      { extension: "segments.json" }
+    );
+  } catch (error) {
+    console.warn("[panel] failed to write segments.json sidecar", error);
+  }
+
   const sessionId = await ensureStoredSessionId(session, durationMs);
   if (sessionId) {
     try {
@@ -1880,8 +2059,96 @@ async function transcribeSessionImpl(session, button) {
   statusEl.textContent = `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).`;
 
   await maybeAutoSummarize(session, result.text, handle, row);
+  await maybeAutoDiarize(session, result.segments, handle, row);
 
   await loadAndRenderSessions();
+}
+
+async function maybeAutoDiarize(session, segments, handle, row) {
+  // Defensive: only fire when the user has opted in AND the speaker
+  // model is already cached. The toggle is gated on cache state in the
+  // settings UI, but a stale toggle could still flip true here — recheck.
+  if (!Array.isArray(segments) || segments.length < 2) return;
+  let enabled = false;
+  try {
+    enabled = await getAutoDiarizePreference();
+  } catch (_) {}
+  if (!enabled) return;
+
+  const modelId = await getSelectedSpeakerEmbedModelId();
+  let cached = false;
+  try {
+    cached = await isSpeakerEmbedModelCached(modelId);
+  } catch (_) {}
+  if (!cached) {
+    statusEl.textContent =
+      "Auto-diarize is enabled but the speaker model isn't cached yet. " +
+      "Download it from Settings to enable automatic diarization.";
+    return;
+  }
+
+  let client = null;
+  try {
+    if (row) setRowProgress(row, { label: "Auto-diarizing", spinner: true });
+
+    const file = await readRecordingFile(handle, session.fileName);
+    const audioCtx = new AudioContext();
+    const audioBuffer = await audioCtx.decodeAudioData(await file.arrayBuffer());
+    audioCtx.close();
+    const pcm16k = await resampleToMono16k(audioBuffer);
+
+    client = await openDiarizationWorker({
+      modelId,
+      onStage: (stage) => row && setRowProgress(row, { label: stage }),
+      onDownloadProgress: () => {
+        // Should not happen: cache check above means no download.
+      },
+      onEngine: (device) => {
+        if (row) {
+          setRowProgress(row, {
+            label: device === "webgpu" ? "Embedding on WebGPU" : "Embedding on CPU"
+          });
+        }
+      }
+    });
+
+    const result = await diarize({
+      segments,
+      pcm16k,
+      embedFn: (slice) => client.embed(slice),
+      onUtteranceProgress: (current, total) => {
+        if (row) setRowProgress(row, { label: `Embedding utterances (${current}/${total})` });
+      }
+    });
+
+    if (result.skipped) return;
+
+    const txt = formatDiarizedText(result.utterances);
+    const json = formatDiarizedJson(result.utterances, result.speakerCount, {
+      sourceFile: session.fileName,
+      modelId,
+      device: client.device,
+      generatedAt: new Date().toISOString()
+    });
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([txt], { type: "text/plain" }),
+      { extension: "diarized.txt" }
+    );
+    await writeRecordingArtifact(
+      handle,
+      session.fileName,
+      new Blob([json], { type: "application/json" }),
+      { extension: "diarized.json" }
+    );
+    statusEl.textContent = `Transcript saved. Diarized as ${result.speakerCount} speaker${result.speakerCount === 1 ? "" : "s"}.`;
+  } catch (error) {
+    // Auto-diarize must not poison the happy transcription path.
+    console.warn("[panel] auto-diarize failed", error);
+  } finally {
+    if (client) client.terminate();
+  }
 }
 
 async function maybeAutoSummarize(session, transcriptText, handle, row) {
