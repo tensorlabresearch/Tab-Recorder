@@ -150,6 +150,17 @@
           The clear-cache button above also clears this model (both use
           the same browser cache namespace).
         </p>
+
+        <label class="toggle">
+          <input id="auto-diarize-toggle" type="checkbox" disabled />
+          <span>Auto-diarize after transcription</span>
+        </label>
+        <p class="help-text">
+          When enabled, the speaker-embedding pass runs automatically as
+          soon as a transcription completes. Disabled until the model is
+          downloaded — we don't want auto-diarize to silently trigger a
+          ~95 MB download mid-transcription.
+        </p>
       </section>
 
       <section class="card">

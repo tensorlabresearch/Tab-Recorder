@@ -20,7 +20,9 @@ import {
   getSelectedSpeakerEmbedModelId,
   setSelectedSpeakerEmbedModelId,
   isSpeakerEmbedModelCached,
-  findSpeakerEmbedModel
+  findSpeakerEmbedModel,
+  getAutoDiarizePreference,
+  setAutoDiarizePreference
 } from "./lib/speakerEmbedModel.js";
 
 const modelSelect = document.getElementById("model-select");
@@ -191,6 +193,27 @@ async function refreshSpeakerCacheState() {
   } else {
     speakerCacheStateEl.textContent = `Not downloaded (~${formatModelSize(model?.approxBytes)})`;
     speakerCacheStateEl.classList.remove("is-positive");
+  }
+  // Auto-diarize toggle is only meaningful once the model is cached —
+  // otherwise we'd silently trigger a 95 MB download mid-transcription.
+  const autoToggle = document.getElementById("auto-diarize-toggle");
+  if (autoToggle) {
+    autoToggle.disabled = !cached;
+    autoToggle.checked = cached ? await getAutoDiarizePreference() : false;
+    if (!autoToggle.dataset.bound) {
+      autoToggle.dataset.bound = "1";
+      autoToggle.addEventListener("change", async () => {
+        try {
+          await setAutoDiarizePreference(autoToggle.checked);
+          showToast(
+            autoToggle.checked ? "Auto-diarize enabled" : "Auto-diarize disabled",
+            "success"
+          );
+        } catch (error) {
+          showToast(`Error: ${error?.message || error}`, "error");
+        }
+      });
+    }
   }
 }
 

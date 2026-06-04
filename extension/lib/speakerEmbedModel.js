@@ -4,6 +4,7 @@
 // and cached by transformers.js itself (browser Cache API).
 
 const MODEL_SETTING_KEY = "speakerEmbedModelId";
+const AUTO_DIARIZE_KEY = "autoDiarizeOnTranscribe";
 
 export const SPEAKER_EMBED_MODELS = [
   {
@@ -38,6 +39,19 @@ export async function setSelectedSpeakerEmbedModelId(id) {
     throw new Error(`Unknown speaker-embedding model: ${id}`);
   }
   await chrome.storage.local.set({ [MODEL_SETTING_KEY]: id });
+}
+
+export async function getAutoDiarizePreference() {
+  try {
+    const result = await chrome.storage.local.get(AUTO_DIARIZE_KEY);
+    return result?.[AUTO_DIARIZE_KEY] === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+export async function setAutoDiarizePreference(enabled) {
+  await chrome.storage.local.set({ [AUTO_DIARIZE_KEY]: !!enabled });
 }
 
 export async function isSpeakerEmbedModelCached(id) {
