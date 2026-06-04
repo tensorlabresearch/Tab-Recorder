@@ -65,6 +65,35 @@ describe("getAutoDiarizePreference / setAutoDiarizePreference", () => {
   });
 });
 
+describe("getSpeakerDetectionEnabled / setSpeakerDetectionEnabled", () => {
+  it("defaults to false (feature is opt-in)", async () => {
+    expect(await mod.getSpeakerDetectionEnabled()).toBe(false);
+  });
+
+  it("round-trips boolean true", async () => {
+    await mod.setSpeakerDetectionEnabled(true);
+    expect(await mod.getSpeakerDetectionEnabled()).toBe(true);
+  });
+
+  it("coerces truthy/falsy values to booleans on write", async () => {
+    await mod.setSpeakerDetectionEnabled("yes");
+    expect(await mod.getSpeakerDetectionEnabled()).toBe(true);
+    await mod.setSpeakerDetectionEnabled(0);
+    expect(await mod.getSpeakerDetectionEnabled()).toBe(false);
+  });
+
+  it("returns false when chrome.storage is unavailable", async () => {
+    chromeMock.restore();
+    delete globalThis.chrome;
+    expect(await mod.getSpeakerDetectionEnabled()).toBe(false);
+  });
+
+  it("is independent of the auto-diarize preference", async () => {
+    await mod.setAutoDiarizePreference(true);
+    expect(await mod.getSpeakerDetectionEnabled()).toBe(false);
+  });
+});
+
 describe("isSpeakerEmbedModelCached", () => {
   it("returns false on a fresh cache", async () => {
     expect(await mod.isSpeakerEmbedModelCached("Xenova/wavlm-base-plus-sv")).toBe(false);

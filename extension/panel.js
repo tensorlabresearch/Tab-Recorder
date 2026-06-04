@@ -16,6 +16,7 @@ import { getSelectedModelId, getAutoTranscribePreference } from "./lib/whisperMo
 import {
   getSelectedSpeakerEmbedModelId,
   getAutoDiarizePreference,
+  getSpeakerDetectionEnabled,
   isSpeakerEmbedModelCached
 } from "./lib/speakerEmbedModel.js";
 import { mergeSessionSources } from "./lib/sessionMerge.js";
@@ -953,6 +954,9 @@ function sleep(ms) {
 
 let cachedMergedSessions = [];
 let browserAiAvailable = false;
+// Master opt-in for speaker detection (off by default). Refreshed before each
+// render so toggling it in Settings takes effect on the next list refresh.
+let speakerDetectionEnabled = false;
 let recordingsFilter = "";
 
 // Operations currently in flight (transcribe, MP3 convert). Tracked by the
@@ -996,6 +1000,14 @@ async function loadAndRenderSessions() {
     fetchDownloadOrphans(),
     fetchFsRecordings()
   ]);
+
+  // Pick up the latest speaker-detection opt-in (toggled in Settings) so the
+  // per-row Diarize action shows/hides without needing a panel reload.
+  try {
+    speakerDetectionEnabled = await getSpeakerDetectionEnabled();
+  } catch (_) {
+    speakerDetectionEnabled = false;
+  }
 
   cachedMergedSessions = mergeSessionSources(stored, downloadOrphans, fsFiles);
 
@@ -1186,10 +1198,11 @@ function renderSessionRow(session) {
     actions.appendChild(summarizeBtn);
   }
 
-  // Diarize requires Whisper segments — we only show it when the segments
+  // Diarize is opt-in (speakerDetectionEnabled) and requires Whisper segments
+  // — we only show it when the user enabled speaker detection AND the segments
   // sidecar is available on disk (written by transcribeSessionImpl). Older
   // recordings without a .segments.json need to be re-transcribed first.
-  if (session._fsSegmentsJsonPath) {
+  if (speakerDetectionEnabled && session._fsSegmentsJsonPath) {
     const diarizeBtn = document.createElement("button");
     diarizeBtn.type = "button";
     diarizeBtn.className = "row-action";
@@ -1547,6 +1560,11 @@ async function summarizeSession(session, button) {
 async function diarizeSession(session, button) {
   if (inProgressFileNames.has(session.fileName)) {
     statusEl.textContent = "Another operation is already running on this recording.";
+    return;
+  }
+  if (!(await getSpeakerDetectionEnabled())) {
+    statusEl.textContent =
+      "Speaker detection is disabled. Enable it in Settings to diarize recordings.";
     return;
   }
   if (!session._fsSegmentsJsonPath) {
@@ -2069,6 +2087,13 @@ async function maybeAutoDiarize(session, segments, handle, row) {
   // model is already cached. The toggle is gated on cache state in the
   // settings UI, but a stale toggle could still flip true here — recheck.
   if (!Array.isArray(segments) || segments.length < 2) return;
+  // Master opt-in gates everything: if speaker detection is off, auto-diarize
+  // never runs even if its own toggle was left enabled from a prior session.
+  let featureOn = false;
+  try {
+    featureOn = await getSpeakerDetectionEnabled();
+  } catch (_) {}
+  if (!featureOn) return;
   let enabled = false;
   try {
     enabled = await getAutoDiarizePreference();

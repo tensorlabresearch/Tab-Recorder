@@ -5,6 +5,7 @@
 
 const MODEL_SETTING_KEY = "speakerEmbedModelId";
 const AUTO_DIARIZE_KEY = "autoDiarizeOnTranscribe";
+const SPEAKER_DETECTION_ENABLED_KEY = "speakerDetectionEnabled";
 
 export const SPEAKER_EMBED_MODELS = [
   {
@@ -39,6 +40,24 @@ export async function setSelectedSpeakerEmbedModelId(id) {
     throw new Error(`Unknown speaker-embedding model: ${id}`);
   }
   await chrome.storage.local.set({ [MODEL_SETTING_KEY]: id });
+}
+
+// Master switch for the whole speaker-detection feature. Off by default:
+// diarization pulls a ~95 MB model and adds an extra pass after every
+// transcription, so it stays opt-in until the user enables it in Settings.
+// When disabled, the panel hides the Diarize action and auto-diarize never
+// fires regardless of the auto-diarize toggle.
+export async function getSpeakerDetectionEnabled() {
+  try {
+    const result = await chrome.storage.local.get(SPEAKER_DETECTION_ENABLED_KEY);
+    return result?.[SPEAKER_DETECTION_ENABLED_KEY] === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+export async function setSpeakerDetectionEnabled(enabled) {
+  await chrome.storage.local.set({ [SPEAKER_DETECTION_ENABLED_KEY]: !!enabled });
 }
 
 export async function getAutoDiarizePreference() {

@@ -118,6 +118,17 @@
           model is downloaded on demand and cached by the browser.
         </p>
 
+        <label class="toggle">
+          <input id="speaker-detection-toggle" type="checkbox" />
+          <span>Enable speaker detection</span>
+        </label>
+        <p class="help-text">
+          Off by default. When enabled, recordings gain a "Diarize" action and
+          the options below become available. Disabling it hides the Diarize
+          action and stops auto-diarize — your downloaded model stays cached.
+        </p>
+
+      <div id="speaker-detection-controls" class="hidden">
         <div class="form-group">
           <label for="speaker-model-select">Model</label>
           <select id="speaker-model-select"></select>
@@ -161,6 +172,7 @@
           downloaded — we don't want auto-diarize to silently trigger a
           ~95 MB download mid-transcription.
         </p>
+      </div>
       </section>
 
       <section class="card">

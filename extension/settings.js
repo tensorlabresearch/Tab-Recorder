@@ -22,7 +22,9 @@ import {
   isSpeakerEmbedModelCached,
   findSpeakerEmbedModel,
   getAutoDiarizePreference,
-  setAutoDiarizePreference
+  setAutoDiarizePreference,
+  getSpeakerDetectionEnabled,
+  setSpeakerDetectionEnabled
 } from "./lib/speakerEmbedModel.js";
 
 const modelSelect = document.getElementById("model-select");
@@ -43,6 +45,8 @@ const speakerProgressFill = document.getElementById("speaker-progress-fill");
 const speakerProgressText = document.getElementById("speaker-progress-text");
 const speakerDownloadButton = document.getElementById("speaker-download-btn");
 const speakerClearButton = document.getElementById("speaker-clear-btn");
+const speakerDetectionToggle = document.getElementById("speaker-detection-toggle");
+const speakerDetectionControls = document.getElementById("speaker-detection-controls");
 
 init().catch((error) => showToast(`Error: ${error?.message || error}`, "error"));
 
@@ -66,6 +70,28 @@ async function init() {
 
   await refreshWhisperCacheState();
   await refreshSpeakerCacheState();
+
+  // Master speaker-detection switch (off by default). Gates visibility of the
+  // model/auto-diarize controls below it.
+  if (speakerDetectionToggle) {
+    const enabled = await getSpeakerDetectionEnabled();
+    speakerDetectionToggle.checked = enabled;
+    applySpeakerDetectionVisibility(enabled);
+    speakerDetectionToggle.addEventListener("change", async () => {
+      try {
+        await setSpeakerDetectionEnabled(speakerDetectionToggle.checked);
+        applySpeakerDetectionVisibility(speakerDetectionToggle.checked);
+        showToast(
+          speakerDetectionToggle.checked
+            ? "Speaker detection enabled"
+            : "Speaker detection disabled",
+          "success"
+        );
+      } catch (error) {
+        showToast(`Error: ${error?.message || error}`, "error");
+      }
+    });
+  }
 
   const autoTranscribeToggle = document.getElementById("auto-transcribe-toggle");
   if (autoTranscribeToggle) {
@@ -180,6 +206,12 @@ async function refreshWhisperCacheState() {
   } else {
     cacheStateEl.textContent = `Not downloaded (~${formatModelSize(model?.approxBytes)})`;
     cacheStateEl.classList.remove("is-positive");
+  }
+}
+
+function applySpeakerDetectionVisibility(enabled) {
+  if (speakerDetectionControls) {
+    speakerDetectionControls.classList.toggle("hidden", !enabled);
   }
 }
 
