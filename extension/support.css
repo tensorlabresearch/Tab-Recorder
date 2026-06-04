@@ -22,9 +22,9 @@ body {
   margin: 0;
   background:
     radial-gradient(circle at 50% -16%, rgba(45, 91, 112, 0.24), transparent 28rem),
-    radial-gradient(circle at 84% 18%, rgba(239, 35, 60, 0.12), transparent 22rem),
-    radial-gradient(circle at 11% 88%, rgba(82, 5, 15, 0.38), transparent 34rem),
-    linear-gradient(180deg, #09131d 0%, #050203 50%, #120306 100%);
+    radial-gradient(circle at 84% 18%, rgba(239, 35, 60, 0.045), transparent 22rem),
+    radial-gradient(circle at 11% 88%, rgba(38, 62, 77, 0.22), transparent 34rem),
+    linear-gradient(180deg, #09131d 0%, #03070d 54%, #050203 100%);
   color: var(--tl-ink);
   min-height: 100vh;
   overflow-x: hidden;
@@ -43,21 +43,34 @@ body::before {
   background:
     linear-gradient(90deg, rgba(255, 245, 239, 0.024) 1px, transparent 1px),
     linear-gradient(180deg, rgba(255, 245, 239, 0.016) 1px, transparent 1px),
-    radial-gradient(circle, rgba(255, 108, 122, 0.28) 0 1px, transparent 1.8px),
+    radial-gradient(circle, rgba(255, 108, 122, 0.13) 0 1px, transparent 1.8px),
     radial-gradient(circle, rgba(134, 194, 206, 0.22) 0 1px, transparent 1.8px);
   background-size: 54px 54px, 54px 54px, 184px 138px, 310px 260px;
   background-position: 0 0, 0 0, 18px 44px, 96px 120px;
-  opacity: 0.5;
+  opacity: 0.42;
   mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.64) 72%, transparent 100%);
 }
 
 body::after {
   z-index: 0;
-  background:
-    url("icons/jellyfish.svg") no-repeat right -46px top 30px / 210px auto,
-    url("icons/jellyfish.svg") no-repeat left -70px bottom -90px / 180px auto;
-  opacity: 0.14;
-  filter: drop-shadow(0 0 34px rgba(239, 35, 60, 0.28));
+  background-image:
+    url("icons/jellyfish.svg"),
+    url("icons/jellyfish.svg"),
+    url("icons/jellyfish.svg"),
+    url("icons/jellyfish.svg");
+  background-repeat: no-repeat;
+  background-position:
+    var(--tl-jelly-1-x, right 3vw) var(--tl-jelly-1-y, top 30px),
+    var(--tl-jelly-2-x, left -24px) var(--tl-jelly-2-y, bottom -64px),
+    var(--tl-jelly-3-x, left 12vw) var(--tl-jelly-3-y, bottom 8vh),
+    var(--tl-jelly-4-x, right 12vw) var(--tl-jelly-4-y, bottom 8vh);
+  background-size:
+    var(--tl-jelly-1-size, 240px) auto,
+    var(--tl-jelly-2-size, 210px) auto,
+    var(--tl-jelly-3-size, 190px) auto,
+    var(--tl-jelly-4-size, 190px) auto;
+  opacity: 0.18;
+  filter: drop-shadow(0 0 28px rgba(239, 35, 60, 0.2)) drop-shadow(0 0 30px rgba(112, 169, 184, 0.08));
   mix-blend-mode: screen;
 }
 
@@ -105,7 +118,7 @@ body::after {
   background:
     linear-gradient(90deg, rgba(255, 245, 239, 0.024) 1px, transparent 1px),
     linear-gradient(180deg, rgba(255, 245, 239, 0.016) 1px, transparent 1px),
-    rgba(5, 2, 3, 0.56);
+    rgba(5, 10, 16, 0.58);
   background-size: 38px 38px, 38px 38px, auto;
   backdrop-filter: blur(12px);
   padding: 18px 20px;
