@@ -89,6 +89,11 @@ function emptyNodeGroup() {
 init();
 
 async function init() {
+  if (!hasExtensionRuntime()) {
+    setupLocalPreviewMode();
+    return;
+  }
+
   const initialLabel = defaultTimestampLabel();
   if (!meetingLabelInput.value) {
     meetingLabelInput.value = initialLabel;
@@ -225,6 +230,60 @@ async function init() {
 
 function hideLoadingSplash() {
   loadingSplashEl?.classList.add("is-hidden");
+}
+
+function hasExtensionRuntime() {
+  return !!(
+    globalThis.chrome?.storage?.local &&
+    globalThis.chrome?.runtime?.getURL &&
+    globalThis.chrome?.tabs
+  );
+}
+
+function setupLocalPreviewMode() {
+  const initialLabel = defaultTimestampLabel();
+  if (meetingLabelInput && !meetingLabelInput.value) {
+    meetingLabelInput.value = initialLabel;
+  }
+  lastAutoLabel = initialLabel;
+
+  buildPreviewMicOptions(micSelect);
+  buildPreviewMicOptions(micSelectLive);
+  updateFolderStatusPreview();
+
+  if (statusEl) {
+    statusEl.textContent = "Preview mode: load the unpacked extension in Chrome to record audio.";
+  }
+  if (startButton) startButton.disabled = true;
+  if (pickFolderButton) pickFolderButton.disabled = true;
+  if (openFolderButton) openFolderButton.disabled = true;
+  if (refreshRecordingsButton) refreshRecordingsButton.disabled = true;
+
+  openSettingsButton?.addEventListener("click", () => {
+    window.location.href = "settings.html";
+  });
+  document.getElementById("open-support-link")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    window.location.href = "support.html";
+  });
+
+  hideLoadingSplash();
+}
+
+function buildPreviewMicOptions(selectEl) {
+  if (!selectEl) return;
+  selectEl.innerHTML = "";
+  const option = document.createElement("option");
+  option.value = NO_MIC_VALUE;
+  option.textContent = "Preview microphone";
+  selectEl.append(option);
+  selectEl.value = NO_MIC_VALUE;
+}
+
+function updateFolderStatusPreview() {
+  if (!folderNameEl) return;
+  folderNameEl.textContent = "Preview mode";
+  folderNameEl.classList.remove("is-positive");
 }
 
 async function populateMicSelectors(savedId) {
