@@ -12,7 +12,10 @@ import {
 import {
   isAvailable as browserAiAvailable,
   getAutoSummarizePreference,
-  setAutoSummarizePreference
+  setAutoSummarizePreference,
+  getSummaryHeadChars,
+  setSummaryHeadChars,
+  BROWSER_AI
 } from "./lib/browserAi.js";
 import {
   SPEAKER_EMBED_MODELS,
@@ -181,6 +184,45 @@ async function refreshBrowserAiState() {
         }
       });
     }
+  }
+
+  await setupSummaryLengthSelect();
+}
+
+function summaryLengthLabel(chars) {
+  if (chars === 0) return "Entire transcript (slowest)";
+  const n = chars.toLocaleString();
+  if (chars === BROWSER_AI.SUMMARY_HEAD_CHARS) return `First ${n} characters (default)`;
+  return `First ${n} characters`;
+}
+
+// The summary-length preference is meaningful whenever the user summarizes,
+// so it stays configurable even if Nano isn't detected yet.
+async function setupSummaryLengthSelect() {
+  const select = document.getElementById("summary-length-select");
+  if (!select) return;
+  const current = await getSummaryHeadChars();
+  const options = [...BROWSER_AI.SUMMARY_HEAD_OPTIONS];
+  // Surface a previously-saved custom value that isn't one of the presets.
+  if (!options.includes(current)) options.push(current);
+  select.innerHTML = "";
+  for (const chars of options) {
+    const opt = document.createElement("option");
+    opt.value = String(chars);
+    opt.textContent = summaryLengthLabel(chars);
+    select.appendChild(opt);
+  }
+  select.value = String(current);
+  if (!select.dataset.bound) {
+    select.dataset.bound = "1";
+    select.addEventListener("change", async () => {
+      try {
+        await setSummaryHeadChars(Number(select.value));
+        showToast(`Summary length: ${summaryLengthLabel(Number(select.value))}`, "success");
+      } catch (error) {
+        showToast(`Error: ${error?.message || error}`, "error");
+      }
+    });
   }
 }
 
