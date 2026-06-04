@@ -275,14 +275,32 @@ export async function enumerateRecordings(handle) {
   const mp3PathsByBase = new Map();
   const txtPathsByBase = new Map();
   const summaryByBase = new Map();
+  const segmentsByBase = new Map();
+  const diarizedTxtByBase = new Map();
+  const diarizedJsonByBase = new Map();
 
   await walkDirectory(handle, [], async (file, segments) => {
     const name = file.name;
     const lower = name.toLowerCase();
     const fullPath = [handle.name || "Tab Recorder", ...segments, name].join("/");
 
-    // Handle the double-suffix sidecar first so it doesn't get parsed
-    // as a plain .md file.
+    // Handle double-suffix sidecars first so they don't get parsed as
+    // plain .md / .txt / .json by the generic ext-split below.
+    if (lower.endsWith(".diarized.txt")) {
+      const dBase = name.slice(0, -".diarized.txt".length);
+      diarizedTxtByBase.set([...segments, dBase].join("/"), fullPath);
+      return;
+    }
+    if (lower.endsWith(".diarized.json")) {
+      const dBase = name.slice(0, -".diarized.json".length);
+      diarizedJsonByBase.set([...segments, dBase].join("/"), fullPath);
+      return;
+    }
+    if (lower.endsWith(".segments.json")) {
+      const sBase = name.slice(0, -".segments.json".length);
+      segmentsByBase.set([...segments, sBase].join("/"), fullPath);
+      return;
+    }
     if (lower.endsWith(".summary.md")) {
       const sumBase = name.slice(0, -".summary.md".length);
       const sumBaseKey = [...segments, sumBase].join("/");
@@ -335,6 +353,9 @@ export async function enumerateRecordings(handle) {
     const sum = summaryByBase.get(baseKey);
     entry.summaryPath = sum?.path || null;
     entry.description = sum?.description || "";
+    entry.segmentsJsonPath = segmentsByBase.get(baseKey) || null;
+    entry.diarizedTxtPath = diarizedTxtByBase.get(baseKey) || null;
+    entry.diarizedJsonPath = diarizedJsonByBase.get(baseKey) || null;
   }
 
   out.sort((a, b) => Number(b.lastModified || 0) - Number(a.lastModified || 0));

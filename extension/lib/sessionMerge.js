@@ -30,6 +30,9 @@ export function synthesizeSessionFromFs(fsFile) {
     mp3FileName: fsFile?.mp3Path || "",
     _fsTxtPath: fsFile?.txtPath || null,
     _fsSummaryPath: fsFile?.summaryPath || null,
+    _fsSegmentsJsonPath: fsFile?.segmentsJsonPath || null,
+    _fsDiarizedTxtPath: fsFile?.diarizedTxtPath || null,
+    _fsDiarizedJsonPath: fsFile?.diarizedJsonPath || null,
     description: fsFile?.description || ""
   };
 }
@@ -72,6 +75,9 @@ export function mergeSessionSources(stored = [], downloadOrphans = [], fsFiles =
       if (fsFile.mp3Path && !existing.mp3FileName) existing.mp3FileName = fsFile.mp3Path;
       if (fsFile.txtPath && !existing.transcriptText) existing._fsTxtPath = fsFile.txtPath;
       if (fsFile.summaryPath) existing._fsSummaryPath = fsFile.summaryPath;
+      if (fsFile.segmentsJsonPath) existing._fsSegmentsJsonPath = fsFile.segmentsJsonPath;
+      if (fsFile.diarizedTxtPath) existing._fsDiarizedTxtPath = fsFile.diarizedTxtPath;
+      if (fsFile.diarizedJsonPath) existing._fsDiarizedJsonPath = fsFile.diarizedJsonPath;
       if (fsFile.description && !existing.description) existing.description = fsFile.description;
       if (fsFile.lastModified && !existing.startedAt) existing.startedAt = fsFile.lastModified;
       continue;
