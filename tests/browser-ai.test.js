@@ -3,10 +3,13 @@ import { installChromeStorageMock } from "./helpers/chrome-storage-mock.js";
 import {
   isAvailable,
   chunkText,
+  takeHead,
   parseStructuredResponse,
   summarizeAndDescribe,
   getAutoSummarizePreference,
   setAutoSummarizePreference,
+  getSummaryHeadChars,
+  setSummaryHeadChars,
   BROWSER_AI,
 } from "../extension/lib/browserAi.js";
 
@@ -91,6 +94,38 @@ describe("auto-summarize preference", () => {
     expect(await getAutoSummarizePreference()).toBe(true);
     await setAutoSummarizePreference(0);
     expect(await getAutoSummarizePreference()).toBe(false);
+  });
+});
+
+describe("summary head-chars preference", () => {
+  it("defaults to SUMMARY_HEAD_CHARS (500)", async () => {
+    expect(await getSummaryHeadChars()).toBe(BROWSER_AI.SUMMARY_HEAD_CHARS);
+    expect(BROWSER_AI.SUMMARY_HEAD_CHARS).toBe(500);
+  });
+
+  it("round-trips a preset value", async () => {
+    await setSummaryHeadChars(1000);
+    expect(await getSummaryHeadChars()).toBe(1000);
+  });
+
+  it("accepts 0 (entire transcript)", async () => {
+    await setSummaryHeadChars(0);
+    expect(await getSummaryHeadChars()).toBe(0);
+  });
+
+  it("floors fractional values", async () => {
+    await setSummaryHeadChars(750.9);
+    expect(await getSummaryHeadChars()).toBe(750);
+  });
+
+  it("rejects negative or non-numeric values", async () => {
+    await expect(setSummaryHeadChars(-1)).rejects.toThrow(/Invalid/);
+    await expect(setSummaryHeadChars("abc")).rejects.toThrow(/Invalid/);
+  });
+
+  it("falls back to the default when a bogus value is stored", async () => {
+    await chrome.storage.local.set({ summaryHeadChars: -5 });
+    expect(await getSummaryHeadChars()).toBe(BROWSER_AI.SUMMARY_HEAD_CHARS);
   });
 });
 
@@ -222,6 +257,34 @@ describe("summarizeAndDescribe", () => {
     expect(promptCalls.length).toBe(3);
   });
 
+  it("only summarizes the first SUMMARY_HEAD_CHARS of a long transcript", async () => {
+    let promptedInput = "";
+    installLanguageModel({
+      prompt: async (input) => {
+        promptedInput = input;
+        return '{"description":"d","summary":"## Summary\\n- s"}';
+      },
+    });
+    // 5000 chars of distinct words; only the opening ~1000 should be sent.
+    const text = Array.from({ length: 1000 }, (_, i) => `word${i}`).join(" ");
+    await summarizeAndDescribe(text);
+    expect(promptedInput.length).toBeLessThanOrEqual(BROWSER_AI.SUMMARY_HEAD_CHARS);
+    expect(text.startsWith(promptedInput)).toBe(true);
+  });
+
+  it("summarizes the whole transcript when headChars: 0", async () => {
+    let promptedInput = "";
+    installLanguageModel({
+      prompt: async (input) => {
+        promptedInput = input;
+        return '{"description":"d","summary":"s"}';
+      },
+    });
+    const text = Array.from({ length: 1000 }, (_, i) => `word${i}`).join(" ");
+    await summarizeAndDescribe(text, { headChars: 0 });
+    expect(promptedInput.length).toBe(text.length);
+  });
+
   it("throws when LanguageModel is missing", async () => {
     delete globalThis.LanguageModel;
     await expect(summarizeAndDescribe("x")).rejects.toThrow(/LanguageModel/);
@@ -234,10 +297,39 @@ describe("summarizeAndDescribe", () => {
   });
 });
 
+describe("takeHead", () => {
+  it("returns the input unchanged when shorter than the cap", () => {
+    expect(takeHead("short text", 1000)).toBe("short text");
+  });
+
+  it("returns empty/whitespace input as empty string", () => {
+    expect(takeHead("", 1000)).toBe("");
+    expect(takeHead("   ", 1000)).toBe("");
+    expect(takeHead(null, 1000)).toBe("");
+  });
+
+  it("caps to at most maxChars", () => {
+    const text = Array.from({ length: 200 }, (_, i) => `w${i}`).join(" ");
+    expect(takeHead(text, 50).length).toBeLessThanOrEqual(50);
+  });
+
+  it("backs off to a word boundary (no mid-word cut)", () => {
+    const out = takeHead("alpha beta gamma delta epsilon", 14);
+    expect(out).toBe("alpha beta"); // hard cut at 14 lands mid-"gamma"
+  });
+
+  it("treats maxChars <= 0 as no cap", () => {
+    const text = "a b c d e f g h i j";
+    expect(takeHead(text, 0)).toBe(text);
+    expect(takeHead(text, -5)).toBe(text);
+  });
+});
+
 describe("BROWSER_AI constants", () => {
   it("exposes the constants the panel needs", () => {
     expect(BROWSER_AI.MODEL_LABEL).toBe("gemini-nano");
     expect(BROWSER_AI.MAX_CHUNK_CHARS).toBeGreaterThan(0);
     expect(BROWSER_AI.MAX_CHUNKS).toBeGreaterThan(0);
+    expect(BROWSER_AI.SUMMARY_HEAD_CHARS).toBeGreaterThan(0);
   });
 });
