@@ -132,9 +132,9 @@ body::after {
 }
 
 .brand-mark {
-  width: 40px;
-  height: 56px;
-  background: url("icons/jellyfish.svg") center / contain no-repeat;
+  width: 44px;
+  height: 44px;
+  background: url("icons/tab-recorder.svg") center / contain no-repeat;
   filter: drop-shadow(0 4px 14px rgba(239, 35, 60, 0.32));
   flex-shrink: 0;
 }
