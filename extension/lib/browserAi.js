@@ -80,7 +80,10 @@ export async function isAvailable() {
   const api = globalThis.LanguageModel;
   if (!api || typeof api.availability !== "function") return false;
   try {
-    const status = await api.availability();
+    // Pass the language attestation here too: Chrome logs a "no output
+    // language was specified" warning against any availability() probe that
+    // omits it, which surfaces as an extension error on every panel load.
+    const status = await api.availability(SESSION_LANGS);
     return status === "available";
   } catch (_) {
     return false;

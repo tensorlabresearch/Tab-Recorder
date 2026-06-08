@@ -236,6 +236,24 @@ export async function writeRecordingArtifact(handle, sessionFileName, blob, { ex
   return { fileName: targetPath };
 }
 
+// Persist a recording's duration (and timestamps) to a small JSON sidecar that
+// lives next to the .webm. chrome.storage.local only holds the session record
+// for the browser that made the recording, so a second browser viewing the
+// same folder has no duration to show. The on-disk sidecar makes that metadata
+// portable across browsers — read back in enumerateRecordings.
+export async function writeRecordingMeta(handle, sessionFileName, meta) {
+  if (!handle || !meta) return null;
+  const durationMs = Number(meta.durationMs);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return null;
+  const payload = {
+    durationMs: Math.round(durationMs),
+    startedAt: Number(meta.startedAt) || 0,
+    endedAt: Number(meta.endedAt) || 0
+  };
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  return await writeRecordingArtifact(handle, sessionFileName, blob, { extension: "meta.json" });
+}
+
 export async function removeRecordingArtifact(handle, sessionFileName, { extensions } = {}) {
   if (!handle) return;
   const writable = await ensureWritable(handle);
@@ -278,6 +296,7 @@ export async function enumerateRecordings(handle) {
   const segmentsByBase = new Map();
   const diarizedTxtByBase = new Map();
   const diarizedJsonByBase = new Map();
+  const metaByBase = new Map();
 
   await walkDirectory(handle, [], async (file, segments) => {
     const name = file.name;
@@ -299,6 +318,16 @@ export async function enumerateRecordings(handle) {
     if (lower.endsWith(".segments.json")) {
       const sBase = name.slice(0, -".segments.json".length);
       segmentsByBase.set([...segments, sBase].join("/"), fullPath);
+      return;
+    }
+    if (lower.endsWith(".meta.json")) {
+      const mBase = name.slice(0, -".meta.json".length);
+      const mKey = [...segments, mBase].join("/");
+      try {
+        const f = await file.getFile();
+        const parsed = JSON.parse(await f.text());
+        if (parsed && typeof parsed === "object") metaByBase.set(mKey, parsed);
+      } catch (_) {}
       return;
     }
     if (lower.endsWith(".summary.md")) {
@@ -356,6 +385,12 @@ export async function enumerateRecordings(handle) {
     entry.segmentsJsonPath = segmentsByBase.get(baseKey) || null;
     entry.diarizedTxtPath = diarizedTxtByBase.get(baseKey) || null;
     entry.diarizedJsonPath = diarizedJsonByBase.get(baseKey) || null;
+    const meta = metaByBase.get(baseKey);
+    entry.hasMeta = !!meta;
+    if (meta && Number(meta.durationMs) > 0) {
+      entry.durationMs = Math.round(Number(meta.durationMs));
+      if (Number(meta.startedAt) > 0) entry.startedAt = Number(meta.startedAt);
+    }
   }
 
   out.sort((a, b) => Number(b.lastModified || 0) - Number(a.lastModified || 0));

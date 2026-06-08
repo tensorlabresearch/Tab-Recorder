@@ -9,6 +9,7 @@ import {
   ensureWritable,
   enumerateRecordings,
   writeRecordingArtifact,
+  writeRecordingMeta,
   removeRecordingArtifact,
   readArtifactText
 } from "./lib/audioFs.js";
@@ -909,6 +910,20 @@ async function persistSessionRecord(session, downloadId, mimeType) {
   } catch (_) {
     // Service worker unavailable; the file is still on disk and will be ignored by the list.
   }
+  // Best-effort: drop a .meta.json sidecar next to the recording so the duration
+  // is visible in other browsers that share this folder (they have no stored
+  // session record for it). Failure here is harmless — enrichment will write it
+  // later from whichever browser first probes the file.
+  try {
+    const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" });
+    if (handle) {
+      await writeRecordingMeta(handle, payload.fileName, {
+        durationMs,
+        startedAt: payload.startedAt,
+        endedAt
+      });
+    }
+  } catch (_) {}
 }
 
 function buildFileName(label) {
@@ -1197,14 +1212,14 @@ function renderSessionRow(session) {
   // — we only show it when the user enabled speaker detection AND the segments
   // sidecar is available on disk (written by transcribeSessionImpl). Older
   // recordings without a .segments.json need to be re-transcribed first.
-  if (speakerDetectionEnabled && session._fsSegmentsJsonPath) {
+  // One pass is sufficient: once a diarized transcript exists we hide the
+  // button entirely (no "Re-diarize").
+  if (speakerDetectionEnabled && session._fsSegmentsJsonPath && !session._fsDiarizedTxtPath) {
     const diarizeBtn = document.createElement("button");
     diarizeBtn.type = "button";
     diarizeBtn.className = "row-action";
     diarizeBtn.dataset.action = "diarize";
-    diarizeBtn.textContent = isInProgress
-      ? "Working..."
-      : session._fsDiarizedTxtPath ? "Re-diarize" : "Diarize";
+    diarizeBtn.textContent = isInProgress ? "Working..." : "Diarize";
     if (isInProgress) {
       diarizeBtn.disabled = true;
       diarizeBtn.title = "An operation is already running on this recording.";
@@ -1397,9 +1412,14 @@ function makeBadgesForSession(session) {
   if (!hasTranscript && !hasMp3 && !hasSummary) return null;
   const wrap = document.createElement("span");
   wrap.className = "recording-badges";
-  // Transcript icon doubles as a copy-to-clipboard button.
+  // Transcript icon doubles as a copy-to-clipboard button. When a diarized
+  // transcript exists it supersedes the plain one, so the copy yields the
+  // speaker-labeled, timestamped version.
   if (hasTranscript) {
-    wrap.appendChild(makeBadge("transcript", "Copy transcript to clipboard", "copy-transcript"));
+    const label = session._fsDiarizedTxtPath
+      ? "Copy speaker transcript to clipboard"
+      : "Copy transcript to clipboard";
+    wrap.appendChild(makeBadge("transcript", label, "copy-transcript"));
   }
   // Summary icon indicates a summary exists and re-summarizes when clicked.
   if (hasSummary) {
@@ -1428,7 +1448,7 @@ async function onRecordingsListClick(event) {
       try {
         const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" });
         if (handle && session?.fileName) {
-          await removeRecordingArtifact(handle, session.fileName, { extensions: ["webm", "mp3", "txt", "summary.md"] });
+          await removeRecordingArtifact(handle, session.fileName, { extensions: ["webm", "mp3", "txt", "summary.md", "meta.json"] });
         }
       } catch (_) {}
       await chrome.runtime.sendMessage({ type: "delete-session", sessionId });
@@ -1442,12 +1462,25 @@ async function onRecordingsListClick(event) {
 
   if (action === "copy-transcript") {
     const session = await findSession(sessionId);
-    let text = session?.transcriptText || "";
-    if (!text && session?._fsTxtPath) {
+    let text = "";
+    let diarized = false;
+    // Speaker detection supersedes the plain transcript: when a diarized
+    // transcript exists, copy that (with speaker labels and timestamps) instead.
+    if (session?._fsDiarizedTxtPath) {
       try {
         const handle = await getRecordingsDirectoryHandle();
-        if (handle) text = (await readArtifactText(handle, session._fsTxtPath)) || "";
+        if (handle) text = (await readArtifactText(handle, session._fsDiarizedTxtPath)) || "";
+        diarized = !!text;
       } catch (_) {}
+    }
+    if (!text) {
+      text = session?.transcriptText || "";
+      if (!text && session?._fsTxtPath) {
+        try {
+          const handle = await getRecordingsDirectoryHandle();
+          if (handle) text = (await readArtifactText(handle, session._fsTxtPath)) || "";
+        } catch (_) {}
+      }
     }
     if (!text) {
       statusEl.textContent = "No transcript on this recording yet.";
@@ -1455,7 +1488,9 @@ async function onRecordingsListClick(event) {
     }
     try {
       await navigator.clipboard.writeText(text);
-      statusEl.textContent = "Transcript copied to clipboard.";
+      statusEl.textContent = diarized
+        ? "Speaker transcript copied to clipboard."
+        : "Transcript copied to clipboard.";
     } catch (error) {
       statusEl.textContent = `Copy failed: ${error?.message || error}`;
     }
@@ -2457,15 +2492,43 @@ async function enrichDurationsInBackground() {
     const cache = getDurationCache();
     const sessions = cachedMergedSessions;
     let updated = false;
+    // Lazily acquire a writable handle so we can persist durations to disk as a
+    // portable .meta.json sidecar. Best-effort: if write access isn't granted we
+    // still show the duration this session via the runtime cache.
+    let writeHandle = null;
+    let triedWriteHandle = false;
+    const getWriteHandle = async () => {
+      if (triedWriteHandle) return writeHandle;
+      triedWriteHandle = true;
+      try { writeHandle = await getRecordingsDirectoryHandle({ mode: "readwrite" }); } catch (_) {}
+      return writeHandle;
+    };
+    const persistMeta = async (session, ms) => {
+      const wh = await getWriteHandle();
+      if (!wh) return;
+      try {
+        await writeRecordingMeta(wh, session.fileName, {
+          durationMs: ms,
+          startedAt: Number(session.startedAt) || 0,
+          endedAt: (Number(session.startedAt) || 0) + ms
+        });
+      } catch (_) {}
+    };
     for (const session of sessions) {
       if (!session?.fileName) continue;
-      if (Number(session.durationMs) > 0) continue;
+      // Already know the duration: just make sure it's mirrored to disk so other
+      // browsers can read it without decoding the whole file.
+      if (Number(session.durationMs) > 0) {
+        if (session._fsHasMeta === false) await persistMeta(session, Math.round(Number(session.durationMs)));
+        continue;
+      }
       if (cache[session.fileName]) continue;
       try {
         const file = await readRecordingFile(handle, session.fileName);
         const ms = await probeAudioDuration(file);
         if (ms > 0) {
           setCachedDuration(session.fileName, ms);
+          await persistMeta(session, ms);
           updated = true;
         }
       } catch (_) {

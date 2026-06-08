@@ -13,13 +13,20 @@ export function synthesizeSessionFromFs(fsFile) {
   const baseLabel = tsMatch
     ? `${tsMatch[1]} ${tsMatch[2]}:${tsMatch[3]}`
     : rawBase.replace(/[-_]/g, " ").trim() || "Recording";
+  // durationMs / startedAt come from the on-disk .meta.json sidecar when present
+  // (written by whichever browser last knew the duration), making the duration
+  // visible even in a browser that never recorded this file.
+  const durationMs = Number(fsFile?.durationMs) > 0 ? Math.round(Number(fsFile.durationMs)) : 0;
+  const startedAt = Number(fsFile?.startedAt) > 0
+    ? Number(fsFile.startedAt)
+    : (fsFile?.lastModified || Date.now());
   return {
     id: `fs-${String(fsFile?.path || "").replace(/[^a-z0-9]/gi, "")}`,
     meetingLabel: baseLabel,
     tabTitle: baseLabel,
-    startedAt: fsFile?.lastModified || Date.now(),
-    endedAt: fsFile?.lastModified || Date.now(),
-    durationMs: 0,
+    startedAt,
+    endedAt: startedAt + durationMs,
+    durationMs,
     fileName: fsFile?.path,
     downloadId: null,
     audioFormat: "webm",
@@ -72,6 +79,13 @@ export function mergeSessionSources(stored = [], downloadOrphans = [], fsFiles =
     if (!k) continue;
     if (map.has(k)) {
       const existing = map.get(k);
+      existing._fsHasMeta = !!fsFile.hasMeta;
+      if (Number(fsFile.durationMs) > 0 && !(Number(existing.durationMs) > 0)) {
+        existing.durationMs = Math.round(Number(fsFile.durationMs));
+        if (!(Number(existing.endedAt) > 0) && Number(existing.startedAt) > 0) {
+          existing.endedAt = Number(existing.startedAt) + existing.durationMs;
+        }
+      }
       if (fsFile.mp3Path && !existing.mp3FileName) existing.mp3FileName = fsFile.mp3Path;
       if (fsFile.txtPath && !existing.transcriptText) existing._fsTxtPath = fsFile.txtPath;
       if (fsFile.summaryPath) existing._fsSummaryPath = fsFile.summaryPath;
