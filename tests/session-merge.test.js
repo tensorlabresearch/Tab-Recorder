@@ -97,6 +97,54 @@ describe("diarization sidecar propagation", () => {
   });
 });
 
+describe("duration sidecar (.meta.json) propagation", () => {
+  it("synthesizeSessionFromFs uses durationMs/startedAt from the sidecar", () => {
+    const out = synthesizeSessionFromFs({
+      baseName: "foo",
+      path: "Tab Recorder/2026-06-01/foo.webm",
+      durationMs: 65000,
+      startedAt: 1717000000000,
+      lastModified: 9999
+    });
+    expect(out.durationMs).toBe(65000);
+    expect(out.startedAt).toBe(1717000000000);
+    expect(out.endedAt).toBe(1717000000000 + 65000);
+  });
+
+  it("synthesizeSessionFromFs falls back to lastModified and zero duration without a sidecar", () => {
+    const out = synthesizeSessionFromFs({
+      baseName: "foo",
+      path: "Tab Recorder/2026-06-01/foo.webm",
+      lastModified: 4242
+    });
+    expect(out.durationMs).toBe(0);
+    expect(out.startedAt).toBe(4242);
+  });
+
+  it("mergeSessionSources fills a stored session's missing duration from the sidecar", () => {
+    const stored = [{ id: "s1", fileName: "Tab Recorder/foo.webm", startedAt: 1000, durationMs: 0 }];
+    const fs = [{ path: "Tab Recorder/foo.webm", baseName: "foo", durationMs: 30000, hasMeta: true }];
+    const out = mergeSessionSources(stored, [], fs);
+    expect(out[0].durationMs).toBe(30000);
+    expect(out[0].endedAt).toBe(31000);
+    expect(out[0]._fsHasMeta).toBe(true);
+  });
+
+  it("mergeSessionSources does not clobber a stored duration with the sidecar", () => {
+    const stored = [{ id: "s1", fileName: "Tab Recorder/foo.webm", durationMs: 12345 }];
+    const fs = [{ path: "Tab Recorder/foo.webm", baseName: "foo", durationMs: 999, hasMeta: true }];
+    const out = mergeSessionSources(stored, [], fs);
+    expect(out[0].durationMs).toBe(12345);
+  });
+
+  it("mergeSessionSources flags stored sessions whose file lacks a sidecar", () => {
+    const stored = [{ id: "s1", fileName: "Tab Recorder/foo.webm", durationMs: 5000 }];
+    const fs = [{ path: "Tab Recorder/foo.webm", baseName: "foo" }];
+    const out = mergeSessionSources(stored, [], fs);
+    expect(out[0]._fsHasMeta).toBe(false);
+  });
+});
+
 describe("pathKey", () => {
   it("returns null for missing input", () => {
     expect(pathKey(null)).toBeNull();
