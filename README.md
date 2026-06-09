@@ -2,21 +2,31 @@
 
 ![Tab Recorder Logo](extension/icons/icon128.png)
 
-Audio-only tab + microphone recorder for Chromium browsers. Records to your
-local Downloads folder, converts to MP3 with [LAME](https://lame.sourceforge.net/)
-via [lamejs](https://github.com/zhuker/lamejs), transcribes locally with
+Free, local-first tab + microphone recorder for Chromium browsers. It records
+to your local Downloads folder, converts to MP3 with [LAME](https://lame.sourceforge.net/)
+via [lamejs](https://github.com/zhuker/lamejs), transcribes on-device with
 [Transformers.js](https://github.com/huggingface/transformers.js) running
 Whisper through ONNX Runtime Web (WebGPU when available, WASM CPU fallback),
-and **optionally summarizes each recording with Chrome's built-in Gemini Nano**
-— strictly opt-in, gated on the model already being present locally so the
-extension never triggers the on-device-model download for you.
+and **optionally summarizes each recording with Chrome's built-in Gemini Nano**.
 
-Nothing leaves your machine except the one-time Whisper model download from
-HuggingFace on first transcription. No analytics, no cloud upload, no API keys.
+No audio, transcript, summary, or recording metadata is uploaded to a cloud
+service by Tab Recorder. Transcription and speaker-detection model artifacts
+may be downloaded from Hugging Face on first use and then cached by the
+browser. No analytics, no remote logging, no advertising trackers, no API keys.
+
+- Homepage: <https://tensorlab.org/tab-recorder/>
+- Privacy policy: <https://tensorlab.org/tab-recorder/privacy/>
+- Support: <https://tensorlab.org/tab-recorder/support/>
 
 ## Quick start
 
 Tested on Chrome and Brave. Both are Chromium and use the same MV3 build.
+
+### Chrome Web Store
+
+Install from the Chrome Web Store once the listing is live.
+
+### Local development install
 
 1. Grab the latest release zip:
    <https://github.com/tensorlabresearch/Tab-Recorder/releases/latest>
@@ -31,7 +41,8 @@ Tested on Chrome and Brave. Both are Chromium and use the same MV3 build.
 6. Click the Tab Recorder toolbar icon. The recorder opens in its own tab.
 
 First transcription downloads the selected Whisper model (~250 MB for the
-default `whisper-small.en`) to your browser's cache. After that it runs offline.
+default `whisper-small.en`) to your browser's cache. After that, the model runs
+locally until the cache is cleared.
 
 ## What it does
 
