@@ -5,15 +5,13 @@
   "description": "Free tab and mic audio recorder with local saving, local transcription, and browser AI summaries.",
   "minimum_chrome_version": "116",
   "permissions": [
-    "activeTab",
-    "tabCapture",
-    "desktopCapture",
-    "tabs",
     "storage",
     "downloads"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://huggingface.co/*",
+    "https://*.huggingface.co/*",
+    "https://*.hf.co/*"
   ],
   "icons": {
     "16": "icons/icon16.png",

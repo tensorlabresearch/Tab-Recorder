@@ -28,15 +28,11 @@ Tab Recorder is an audio-first browser extension that captures browser tab audio
 
 | Permission | Why It's Needed |
 |---|---|
-| `activeTab` | To detect which tab is currently active when recording starts |
-| `tabCapture` | To capture audio from a specific browser tab via `chrome.tabCapture.capture()` |
-| `desktopCapture` | To present the native screen/tab/audio picker via `chrome.desktopCapture.chooseDesktopMedia()` |
-| `tabs` | To read tab title/URL metadata for labeling recordings (read-only) |
 | `storage` | To persist session metadata (recording list, titles, durations) across browser restarts |
 | `downloads` | To save recordings to the user's Downloads folder with a default filename |
-| `host_permissions: <all_urls>` | Required by `tabCapture` API to capture audio from any active tab regardless of origin |
+| `host_permissions: https://huggingface.co/*`, `https://*.huggingface.co/*`, `https://*.hf.co/*` | To download the local-inference model artifacts (Whisper transcription and optional speaker detection) from Hugging Face on first use. These are cached by the browser and inference runs locally via WASM/ONNX. |
 
-**Removed in v1.1.0:** `host_permissions: https://huggingface.co/*` was previously included for development/debugging of local model loading. This permission has been removed because model downloads do not require extension host permissions; local inference runs in the browser via WASM/ONNX.
+Recording itself uses the standard `navigator.mediaDevices.getDisplayMedia()` Web API, which presents the native tab/screen picker and requires no extension permission.
 
 ## Data Usage — How Is Data Used?
 
