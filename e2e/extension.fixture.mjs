@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultExtensionPath = process.env.EXTENSION_PATH
-  ?? path.resolve(__dirname, '../projects/tab-recorder-v2');
+  ?? path.resolve(__dirname, '../extension');
 
 export const test = base.extend({
   extensionPath: async ({}, use) => {
