@@ -6,9 +6,9 @@ test('Tab-Recorder installs and exposes its MV3 service worker', async ({ manife
   expect(runtimeManifest.name).toBeTruthy();
 });
 
-test('Tab-Recorder popup renders controls', async ({ page, extensionId, manifest }) => {
-  const popupPath = manifest.action?.default_popup ?? 'popup.html';
-  await page.goto(`chrome-extension://${extensionId}/${popupPath}`);
+test('Tab-Recorder popup renders controls', async ({ page, extensionId }) => {
+  const panelPath = 'panel.html';
+  await page.goto(`chrome-extension://${extensionId}/${panelPath}`);
   await expect(page.locator('body')).toBeVisible();
   const buttonCount = await page.getByRole('button').count();
   expect(buttonCount).toBeGreaterThan(0);
