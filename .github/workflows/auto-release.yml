@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           LATEST_MSG=$(git log -1 --pretty=format:'%s')
-          if [[ "$LATEST_MSG" == chore(release):* ]]; then
+          if [[ "$LATEST_MSG" == "chore(release):"* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Latest commit is a release bump — skipping."
           else
