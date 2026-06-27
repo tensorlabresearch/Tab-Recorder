@@ -1,19 +1,27 @@
 {
   "private": true,
+  "type": "module",
   "name": "tab-recorder",
   "version": "1.9.2",
   "scripts": {
     "test": "vitest run",
     "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "PWHEADLESS=false xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "vendor:transformers": "bash scripts/vendor-transformers.sh"
   },
   "devDependencies": {
     "@breezystack/lamejs": "^1.2.7",
+    "@eslint/js": "^9.30.0",
     "@huggingface/transformers": "^4.2.0",
     "@playwright/test": "^1.59.1",
+    "@vitest/coverage-v8": "^3.0.0",
+    "eslint": "^9.30.0",
     "fake-indexeddb": "^6.2.5",
+    "jsdom": "^26.0.0",
     "vitest": "^3.0.0"
   }
 }

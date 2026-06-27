@@ -48,7 +48,6 @@ export async function diarize({
   for (let i = 0; i < utterances.length; i++) {
     const u = utterances[i];
     const slice = sliceAudio(pcm16k, u.startSec, u.endSec);
-    // eslint-disable-next-line no-await-in-loop -- sequential by design (memory)
     const emb = await embedFn(slice);
     embeddings.push(emb);
     if (typeof onUtteranceProgress === "function") {

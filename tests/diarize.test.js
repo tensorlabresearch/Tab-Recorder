@@ -12,14 +12,6 @@ function silentPcm(seconds) {
 // An embed function that returns a fixed vector based on the audio
 // slice's mean amplitude — gives us a deterministic, controllable
 // "speaker identity" stand-in for tests.
-function makeFakeEmbed(idForSlice) {
-  return async (slice) => {
-    const id = idForSlice(slice);
-    const vec = new Float32Array(4);
-    vec[id % 4] = 1;
-    return vec;
-  };
-}
 
 describe("sliceAudio", () => {
   it("slices into the buffer in sample space", () => {

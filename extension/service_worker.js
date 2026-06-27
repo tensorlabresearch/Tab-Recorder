@@ -75,14 +75,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
-async function getSessions() {
+export async function getSessions() {
   const localStorage = globalThis.chrome?.storage?.local;
   if (!localStorage) return [];
   const { [STORAGE_KEYS.SESSIONS]: sessions } = await localStorage.get(STORAGE_KEYS.SESSIONS);
   return Array.isArray(sessions) ? sessions : [];
 }
 
-async function saveSession(session) {
+export async function saveSession(session) {
   const sessions = await getSessions();
   sessions.unshift(session);
   const localStorage = globalThis.chrome?.storage?.local;
@@ -92,7 +92,7 @@ async function saveSession(session) {
   await localStorage.set({ [STORAGE_KEYS.SESSIONS]: sessions.slice(0, 300) });
 }
 
-async function saveSessionFromPanel(payload) {
+export async function saveSessionFromPanel(payload) {
   if (!payload || typeof payload !== "object") {
     throw new Error("Session payload required");
   }
@@ -121,7 +121,7 @@ async function saveSessionFromPanel(payload) {
   return session;
 }
 
-async function updateSessionMp3(sessionId, mp3) {
+export async function updateSessionMp3(sessionId, mp3) {
   const id = String(sessionId || "").trim();
   if (!id) throw new Error("Session ID is required");
   if (!mp3 || typeof mp3 !== "object") throw new Error("MP3 payload required");
@@ -143,7 +143,7 @@ async function updateSessionMp3(sessionId, mp3) {
   return sessions[index];
 }
 
-async function updateSessionTranscript(sessionId, transcriptText, transcriptWords) {
+export async function updateSessionTranscript(sessionId, transcriptText, transcriptWords) {
   const id = String(sessionId || "").trim();
   if (!id) throw new Error("Session ID is required");
   const text = String(transcriptText || "").trim();
@@ -176,7 +176,7 @@ async function updateSessionTranscript(sessionId, transcriptText, transcriptWord
   return sessions[index];
 }
 
-async function deleteSession(sessionId) {
+export async function deleteSession(sessionId) {
   const id = String(sessionId || "").trim();
   if (!id) throw new Error("Session ID is required");
 
@@ -211,7 +211,7 @@ async function deleteSession(sessionId) {
   }
 }
 
-async function getOrphanDownloads() {
+export async function getOrphanDownloads() {
   const stored = await getSessions();
   let downloads = [];
   try {
@@ -236,7 +236,7 @@ async function getOrphanDownloads() {
     .map(synthesizeSessionFromDownload);
 }
 
-function synthesizeSessionFromDownload(download) {
+export function synthesizeSessionFromDownload(download) {
   const fullPath = String(download.filename || "");
   const basename = fullPath.split(/[\/\\]/).pop() || "recording";
   let label = basename.replace(/\.[a-z0-9]+$/i, "");

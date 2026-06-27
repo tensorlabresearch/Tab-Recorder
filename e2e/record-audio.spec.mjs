@@ -3,7 +3,6 @@ import { startServer, stopServer } from './server.mjs';
 import { promises as fs } from 'fs';
 import path from 'path';
 
-const TEST_TIMEOUT = 120000;
 const RECORD_DURATION_MS = 5000;
 const OUTPUT_DIR = '/tmp/tab-recorder-e2e';
 
@@ -71,7 +70,7 @@ test('record synthetic audio and produce valid webm file', async ({ page }) => {
   try {
     const { exec } = await import('child_process');
     const ffprobeResult = await new Promise((resolve, reject) => {
-      exec(`ffprobe -v error -show_format -show_streams -of json "${outputPath}"`, (error, stdout, stderr) => {
+      exec(`ffprobe -v error -show_format -show_streams -of json "${outputPath}"`, (error, stdout, _stderr) => {
         if (error) reject(error);
         else resolve(stdout);
       });

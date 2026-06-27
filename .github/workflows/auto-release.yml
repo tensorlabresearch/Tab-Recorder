@@ -4,6 +4,10 @@ name: Auto Release
 # bump patch/minor/major, update package.json + manifest.json, commit and
 # tag, build the extension zip, and publish a GitHub Release.
 #
+# This workflow triggers automatically AFTER the CI workflow completes
+# successfully on the main branch. It will not run on pull requests or
+# when CI fails.
+#
 # Conventional Commits subset used to pick the bump type:
 #   feat!:  / fix!: / chore!: / "BREAKING CHANGE" in body  -> major
 #   feat:  / feat(scope):                                   -> minor
@@ -12,7 +16,9 @@ name: Auto Release
 # Skips itself on the bump commit it just authored ("chore(release):").
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -20,7 +26,7 @@ permissions:
 
 jobs:
   release:
-    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,16 +35,38 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
 
+      - name: Check if latest commit is a release bump
+        id: skip
+        shell: bash
+        run: |
+          set -euo pipefail
+          LATEST_MSG=$(git log -1 --pretty=format:'%s')
+          if [[ "$LATEST_MSG" == chore(release):* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Latest commit is a release bump — skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bail if release commit
+        if: steps.skip.outputs.skip == 'true'
+        run: echo "Skipping release — bump commit detected."
+
       - uses: actions/setup-node@v4
+        if: steps.skip.outputs.skip != 'true'
         with:
           node-version: 20
           cache: npm
 
       - run: npm ci
+        if: steps.skip.outputs.skip != 'true'
+
       - run: npm test
+        if: steps.skip.outputs.skip != 'true'
 
       - name: Determine bump type
         id: bump
+        if: steps.skip.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -63,6 +91,7 @@ jobs:
 
       - name: Bump package.json + manifest.json
         id: version
+        if: steps.skip.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -81,6 +110,7 @@ jobs:
           echo "New version: $NEW_VERSION"
 
       - name: Commit and tag
+        if: steps.skip.outputs.skip != 'true'
         env:
           NEW_VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -93,6 +123,7 @@ jobs:
           git push origin main --follow-tags
 
       - name: Package extension
+        if: steps.skip.outputs.skip != 'true'
         env:
           NEW_VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -107,6 +138,7 @@ jobs:
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
+        if: steps.skip.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}

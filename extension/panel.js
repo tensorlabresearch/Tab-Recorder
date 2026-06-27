@@ -32,6 +32,17 @@ import {
   BROWSER_AI
 } from "./lib/browserAi.js";
 import { serializeSummary } from "./lib/summaryFile.js";
+import {
+  TRANSCRIPTION_SAMPLE_RATE,
+  createTranscriptionChunkPlan,
+  mergeTranscriptionChunkResults,
+  offsetTranscriptionSegment,
+  segmentBelongsToTranscriptionChunk
+} from "./lib/transcriptionChunks.js";
+import {
+  canDecodeWebmOpusWithWebCodecs,
+  decodeWebmOpusChunks
+} from "./lib/webmOpusDecoder.js";
 
 const statusEl = document.getElementById("status");
 const recordingStatusEl = document.getElementById("recording-status");
@@ -84,7 +95,7 @@ let micMuted = false;
 
 let graph = freshGraph();
 
-function freshGraph() {
+export function freshGraph() {
   return {
     context: null,
     recordDestination: null,
@@ -93,7 +104,7 @@ function freshGraph() {
   };
 }
 
-function emptyNodeGroup() {
+export function emptyNodeGroup() {
   return { stream: null, source: null, gain: null, analyser: null, endedHandler: null };
 }
 
@@ -330,7 +341,7 @@ async function refreshMicSelectors() {
   buildMicOptions(micSelectLive, cachedMicDevices, target);
 }
 
-function pickInitialMicId(savedId, mics) {
+export function pickInitialMicId(savedId, mics) {
   if (savedId === NO_MIC_VALUE) return NO_MIC_VALUE;
   if (savedId && mics.some(m => m.deviceId === savedId)) return savedId;
   if (mics.length === 0) return NO_MIC_VALUE;
@@ -926,7 +937,7 @@ async function persistSessionRecord(session, downloadId, mimeType) {
   } catch (_) {}
 }
 
-function buildFileName(label) {
+export function buildFileName(label) {
   const now = new Date();
   const dateStr = now.toISOString().split("T")[0];
   const hh = String(now.getHours()).padStart(2, "0");
@@ -941,7 +952,7 @@ function cleanMeetingLabel() {
   return value || defaultTimestampLabel();
 }
 
-function defaultTimestampLabel() {
+export function defaultTimestampLabel() {
   const now = new Date();
   const date = now.toISOString().split("T")[0];
   const hh = String(now.getHours()).padStart(2, "0");
@@ -949,7 +960,7 @@ function defaultTimestampLabel() {
   return `${date} ${hh}:${mm}`;
 }
 
-function formatElapsed(ms) {
+export function formatElapsed(ms) {
   const total = Math.floor(ms / 1000);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -982,12 +993,12 @@ const inProgressFileNames = new Set();
 let operationsInFlight = 0;
 let deferredReload = false;
 
-function startOperation(fileName) {
+export function startOperation(fileName) {
   if (fileName) inProgressFileNames.add(fileName);
   operationsInFlight += 1;
 }
 
-function endOperation(fileName) {
+export function endOperation(fileName) {
   if (fileName) inProgressFileNames.delete(fileName);
   operationsInFlight = Math.max(0, operationsInFlight - 1);
   if (operationsInFlight === 0 && deferredReload) {
@@ -996,7 +1007,7 @@ function endOperation(fileName) {
   }
 }
 
-function formatWorkerErrorEvent(event) {
+export function formatWorkerErrorEvent(event) {
   if (!event) return "";
   const parts = [];
   if (event.message) parts.push(event.message);
@@ -1053,15 +1064,13 @@ async function loadAndRenderSessions() {
   applyRecordingsFilter();
 }
 
-function applyRecordingsFilter() {
+export function applyRecordingsFilter() {
   if (!recordingsListEl) return;
   const q = recordingsFilter;
   const countEl = document.getElementById("recordings-filter-count");
   if (!q) {
-    let total = 0;
     for (const row of recordingsListEl.querySelectorAll(".recording-item")) {
       row.classList.remove("is-filtered-out");
-      total++;
     }
     if (countEl) countEl.textContent = "";
     return;
@@ -1110,7 +1119,7 @@ async function fetchFsRecordings() {
 }
 
 
-function renderSessionRow(session) {
+export function renderSessionRow(session) {
   const row = document.createElement("div");
   row.className = "recording-item";
   row.dataset.sessionId = session.id;
@@ -1321,14 +1330,14 @@ function clearTranscriptPreview(row) {
   preview.classList.add("hidden");
 }
 
-function formatStamp(ms) {
+export function formatStamp(ms) {
   const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function setRowProgress(row, { label, fraction, visible, spinner } = {}) {
+export function setRowProgress(row, { label, fraction, visible, spinner } = {}) {
   if (!row) return;
   const progress = row.querySelector('[data-role="progress"]');
   if (!progress) return;
@@ -1392,7 +1401,7 @@ const BADGE_ICONS = {
 // a real <button data-action> so the existing onRecordingsListClick delegate
 // handles it — the icon doubles as a button (copy transcript, reveal MP3,
 // re-summarize, etc.).
-function makeBadge(kind, label, action) {
+export function makeBadge(kind, label, action) {
   const el = document.createElement(action ? "button" : "span");
   el.className = `recording-badge recording-badge-${kind}${action ? " is-action" : ""}`;
   el.title = label;
@@ -1405,7 +1414,7 @@ function makeBadge(kind, label, action) {
   return el;
 }
 
-function makeBadgesForSession(session) {
+export function makeBadgesForSession(session) {
   const hasTranscript = !!(session.transcriptText || session._fsTxtPath);
   const hasMp3 = !!session.mp3FileName;
   const hasSummary = !!session._fsSummaryPath;
@@ -1771,7 +1780,7 @@ function triggerAutoTranscribe(sessionId) {
   }
 }
 
-function formatSessionDate(ts) {
+export function formatSessionDate(ts) {
   if (!ts) return "";
   const date = new Date(Number(ts));
   if (Number.isNaN(date.getTime())) return "";
@@ -1782,7 +1791,7 @@ function formatSessionDate(ts) {
   );
 }
 
-function formatDurationHuman(ms) {
+export function formatDurationHuman(ms) {
   const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -2028,47 +2037,73 @@ async function transcribeSessionImpl(session, button) {
     return;
   }
 
-  setRowProgress(row, { label: "Decoding audio" });
-  let pcm16k;
-  let durationMs;
-  try {
-    const audioCtx = new AudioContext();
-    const arrayBuffer = await file.arrayBuffer();
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-    audioCtx.close();
-    durationMs = Math.round(audioBuffer.duration * 1000);
+  setRowProgress(row, { label: "Inspecting audio" });
+  let audioBuffer;
+  let durationMs = Math.round(Number(session?.durationMs) || 0);
+  let transcriptionPlan = createTranscriptionChunkPlan(durationMs);
+  const canStreamLargeWebm =
+    transcriptionPlan.chunked &&
+    isWebmRecording(file, session) &&
+    canDecodeWebmOpusWithWebCodecs();
+
+  if (!canStreamLargeWebm) {
+    if (transcriptionPlan.chunked && isWebmRecording(file, session)) {
+      statusEl.textContent =
+        "This browser cannot stream-decode large WebM/Opus recordings. " +
+        "Update Chrome and try again.";
+      restore();
+      return;
+    }
+    setRowProgress(row, { label: "Decoding audio" });
+    try {
+      const audioCtx = new AudioContext();
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      } finally {
+        await audioCtx.close().catch(() => {});
+      }
+      durationMs = Math.round(audioBuffer.duration * 1000);
+      setCachedDuration(session.fileName, durationMs);
+      transcriptionPlan = createTranscriptionChunkPlan(durationMs);
+    } catch (error) {
+      statusEl.textContent = `Decode failed: ${error?.message || error}`;
+      restore();
+      return;
+    }
+  } else {
     setCachedDuration(session.fileName, durationMs);
-    pcm16k = await resampleToMono16k(audioBuffer);
-  } catch (error) {
-    statusEl.textContent = `Decode failed: ${error?.message || error}`;
-    restore();
-    return;
   }
 
-  setRowProgress(row, { label: "Loading transcription model" });
+  if (transcriptionPlan?.chunked) {
+    statusEl.textContent =
+      `Large recording detected (${formatDurationHuman(durationMs)}). ` +
+      `Transcribing in ${transcriptionPlan.chunks.length} chunks.`;
+    setRowProgress(row, { label: `Large recording: ${transcriptionPlan.chunks.length} transcription chunks` });
+  }
+
+  setRowProgress(row, { label: "Preparing transcription" });
   const modelId = await getSelectedModelId();
+  const transcriptionCallbacks = {
+    modelId,
+    row,
+    onDownloadProgress: ({ file: fileName, loaded, total, progress }) => {
+      const pct = Number(progress) || (total ? Math.round((loaded / total) * 100) : 0);
+      const label = fileName
+        ? `Downloading ${fileName} (${pct}%)`
+        : `Downloading model (${pct}%)`;
+      setRowProgress(row, { label });
+    },
+    onSegment: (segment) => {
+      appendTranscriptSegment(row, segment);
+    }
+  };
 
   let result;
   try {
-    result = await runWhisperWorker(pcm16k, {
-      modelId,
-      onStage: (stage) => setRowProgress(row, { label: stage }),
-      onDownloadProgress: ({ file: fileName, loaded, total, progress }) => {
-        const pct = Number(progress) || (total ? Math.round((loaded / total) * 100) : 0);
-        const label = fileName
-          ? `Downloading ${fileName} (${pct}%)`
-          : `Downloading model (${pct}%)`;
-        setRowProgress(row, { label });
-      },
-      onEngine: (device) => {
-        setRowProgress(row, {
-          label: device === "webgpu" ? "Transcribing on WebGPU" : "Transcribing on CPU"
-        });
-      },
-      onSegment: (segment) => {
-        appendTranscriptSegment(row, segment);
-      }
-    });
+    result = audioBuffer
+      ? await transcribeAudioBuffer(audioBuffer, transcriptionPlan, transcriptionCallbacks)
+      : await transcribeWebmOpusFile(file, transcriptionPlan, transcriptionCallbacks);
   } catch (error) {
     const msg = String(error?.message || error);
     console.error("[panel] transcription failed", error);
@@ -2076,6 +2111,7 @@ async function transcribeSessionImpl(session, button) {
     restore();
     return;
   }
+  audioBuffer = null;
 
   console.log("[panel] transcription returned", {
     device: result.device,
@@ -2302,8 +2338,25 @@ async function ensureStoredSessionId(session, durationMs) {
 }
 
 async function resampleToMono16k(audioBuffer) {
-  const targetRate = 16000;
-  const numFrames = Math.ceil(audioBuffer.duration * targetRate);
+  return await renderMono16k(audioBuffer);
+}
+
+async function resampleAudioBufferRangeToMono16k(audioBuffer, startMs, endMs) {
+  return await renderMono16k(audioBuffer, { startMs, endMs });
+}
+
+async function renderMono16k(audioBuffer, { startMs = 0, endMs = null } = {}) {
+  const targetRate = TRANSCRIPTION_SAMPLE_RATE;
+  const startSec = Math.max(0, Number(startMs) / 1000 || 0);
+  const requestedEndSec = endMs == null ? audioBuffer.duration : Number(endMs) / 1000;
+  const endSec = Math.min(
+    audioBuffer.duration,
+    Number.isFinite(requestedEndSec) && requestedEndSec > startSec
+      ? requestedEndSec
+      : audioBuffer.duration
+  );
+  const durationSec = Math.max(1 / targetRate, endSec - startSec);
+  const numFrames = Math.max(1, Math.ceil(durationSec * targetRate));
   const offline = new OfflineAudioContext(1, numFrames, targetRate);
   const source = offline.createBufferSource();
   source.buffer = audioBuffer;
@@ -2323,76 +2376,286 @@ async function resampleToMono16k(audioBuffer) {
     source.connect(offline.destination);
   }
 
-  source.start(0);
+  source.start(0, startSec, durationSec);
   const rendered = await offline.startRendering();
   return new Float32Array(rendered.getChannelData(0));
 }
 
-function runWhisperWorker(pcm16k, { modelId, onSegment, onStage, onEngine, onDownloadProgress } = {}) {
-  return new Promise((resolve, reject) => {
-    const workerUrl = chrome.runtime.getURL("lib/whisperWorker.js");
-    const worker = new Worker(workerUrl, { type: "module" });
-    const jobId = Math.random().toString(36).slice(2, 10);
-
-    worker.onmessage = (event) => {
-      const data = event.data;
-      if (!data || data.jobId !== jobId) return;
-      if (data.type === "stage") {
-        try { onStage?.(data.stage); } catch (_) {}
-        return;
-      }
-      if (data.type === "downloadProgress") {
-        try { onDownloadProgress?.(data); } catch (_) {}
-        return;
-      }
-      if (data.type === "engine") {
-        try { onEngine?.(data.device); } catch (_) {}
-        return;
-      }
-      if (data.type === "segment") {
-        if (data.segment) {
-          try { onSegment?.(data.segment); } catch (_) {}
-        }
-        return;
-      }
-      if (data.type === "done") {
-        worker.terminate();
-        resolve({
-          text: data.text || "",
-          segments: data.segments || [],
-          device: data.device || null
-        });
-        return;
-      }
-      if (data.type === "error") {
-        worker.terminate();
-        reject(new Error(data.error || "Transcription failed"));
-      }
-    };
-    worker.onerror = (event) => {
-      const detail = formatWorkerErrorEvent(event);
-      console.error("[panel] whisper worker errored", event);
-      worker.terminate();
-      reject(new Error(detail || "Worker error (no details from runtime)"));
-    };
-    worker.onmessageerror = (event) => {
-      console.error("[panel] whisper worker message error", event);
-      worker.terminate();
-      reject(new Error("Worker message error (postMessage cloning failed)"));
-    };
-
-    const pcmBuffer = pcm16k.buffer;
-    worker.postMessage(
-      {
-        type: "transcribe",
-        jobId,
-        modelId: modelId || "Xenova/whisper-small.en",
-        pcm: new Float32Array(pcmBuffer),
-        language: "english"
+async function transcribeAudioBuffer(
+  audioBuffer,
+  plan,
+  { modelId, row, onDownloadProgress, onSegment } = {}
+) {
+  if (!plan?.chunked) {
+    setRowProgress(row, { label: "Resampling audio" });
+    const pcm16k = await resampleToMono16k(audioBuffer);
+    return await runWhisperWorker(pcm16k, {
+      modelId,
+      onStage: (stage) => setRowProgress(row, { label: stage }),
+      onDownloadProgress,
+      onEngine: (device) => {
+        setRowProgress(row, { label: formatTranscriptionEngineLabel(device) });
       },
-      [pcmBuffer]
-    );
+      onSegment
+    });
+  }
+
+  return await runChunkedWhisperTranscription(audioBuffer, plan, {
+    modelId,
+    row,
+    onDownloadProgress,
+    onSegment
   });
+}
+
+async function runChunkedWhisperTranscription(
+  audioBuffer,
+  plan,
+  { modelId, row, onDownloadProgress, onSegment } = {}
+) {
+  const chunkResults = [];
+  let activeChunkLabel = "";
+  let device = null;
+  const client = createWhisperWorkerClient({
+    modelId,
+    onDownloadProgress,
+    onEngine: (engine) => {
+      setRowProgress(row, { label: formatTranscriptionEngineLabel(engine, activeChunkLabel) });
+    }
+  });
+
+  try {
+    for (const chunk of plan.chunks) {
+      activeChunkLabel = formatTranscriptionChunkLabel(chunk);
+      setRowProgress(row, { label: `Preparing ${activeChunkLabel}` });
+      const pcm16k = await resampleAudioBufferRangeToMono16k(
+        audioBuffer,
+        chunk.audioStartMs,
+        chunk.audioEndMs
+      );
+
+      setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
+      const result = await client.transcribe(pcm16k, {
+        onStage: (stage) => {
+          if (stage === "Transcribing") {
+            setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
+          } else {
+            setRowProgress(row, { label: `${stage} (${chunk.index + 1}/${chunk.total})` });
+          }
+        },
+        onSegment: (segment) => {
+          const adjusted = offsetTranscriptionSegment(segment, chunk.audioStartMs);
+          if (segmentBelongsToTranscriptionChunk(adjusted, chunk)) {
+            onSegment?.(adjusted);
+          }
+        }
+      });
+      device = result.device || device;
+      chunkResults.push({ chunk, result });
+    }
+  } finally {
+    client.terminate();
+  }
+
+  return {
+    ...mergeTranscriptionChunkResults(chunkResults),
+    device,
+    chunkCount: plan.chunks.length
+  };
+}
+
+async function transcribeWebmOpusFile(
+  file,
+  plan,
+  { modelId, row, onDownloadProgress, onSegment } = {}
+) {
+  const chunkResults = [];
+  let activeChunkLabel = "";
+  let device = null;
+  const client = createWhisperWorkerClient({
+    modelId,
+    onDownloadProgress,
+    onEngine: (engine) => {
+      setRowProgress(row, { label: formatTranscriptionEngineLabel(engine, activeChunkLabel) });
+    }
+  });
+
+  try {
+    setRowProgress(row, { label: "Reading WebM audio packets" });
+    const chunks = decodeWebmOpusChunks(file, plan, {
+      onProgress: ({ chunk, fed, total }) => {
+        const label = formatTranscriptionChunkLabel(chunk);
+        setRowProgress(row, { label: `Decoding ${label} (${fed}/${total})` });
+      }
+    });
+
+    for await (const { chunk, pcm16k, packetCount, decodedFrames } of chunks) {
+      if (!packetCount || !decodedFrames) continue;
+      activeChunkLabel = formatTranscriptionChunkLabel(chunk);
+      setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
+      const result = await client.transcribe(pcm16k, {
+        onStage: (stage) => {
+          if (stage === "Transcribing") {
+            setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
+          } else {
+            setRowProgress(row, { label: `${stage} (${chunk.index + 1}/${chunk.total})` });
+          }
+        },
+        onSegment: (segment) => {
+          const adjusted = offsetTranscriptionSegment(segment, chunk.audioStartMs);
+          if (segmentBelongsToTranscriptionChunk(adjusted, chunk)) {
+            onSegment?.(adjusted);
+          }
+        }
+      });
+      device = result.device || device;
+      chunkResults.push({ chunk, result });
+    }
+  } finally {
+    client.terminate();
+  }
+
+  return {
+    ...mergeTranscriptionChunkResults(chunkResults),
+    device,
+    chunkCount: plan.chunks.length
+  };
+}
+
+export function isWebmRecording(file, session) {
+  const name = String(file?.name || session?.fileName || "").toLowerCase();
+  const type = String(file?.type || "").toLowerCase();
+  return name.endsWith(".webm") || type.includes("webm");
+}
+
+export function formatTranscriptionChunkLabel(chunk) {
+  return (
+    `chunk ${chunk.index + 1}/${chunk.total} ` +
+    `(${formatDurationHuman(chunk.coreStartMs)}-${formatDurationHuman(chunk.coreEndMs)})`
+  );
+}
+
+export function formatTranscriptionEngineLabel(device, chunkLabel = "") {
+  const engine = device === "webgpu" ? "WebGPU" : "CPU";
+  return chunkLabel ? `Transcribing ${chunkLabel} on ${engine}` : `Transcribing on ${engine}`;
+}
+
+async function runWhisperWorker(pcm16k, options = {}) {
+  const client = createWhisperWorkerClient(options);
+  try {
+    return await client.transcribe(pcm16k, options);
+  } finally {
+    client.terminate();
+  }
+}
+
+function createWhisperWorkerClient({ modelId, onEngine, onDownloadProgress } = {}) {
+  const workerUrl = chrome.runtime.getURL("lib/whisperWorker.js");
+  const worker = new Worker(workerUrl, { type: "module" });
+  let activeJob = null;
+  let closed = false;
+
+  const rejectActive = (error) => {
+    if (!activeJob) return;
+    const job = activeJob;
+    activeJob = null;
+    job.reject(error);
+  };
+
+  worker.onmessage = (event) => {
+    const data = event.data;
+    if (!data) return;
+    if (data.type === "worker-import-error") {
+      rejectActive(new Error(data.error || "Transformers.js import failed"));
+      return;
+    }
+    if (!activeJob || data.jobId !== activeJob.jobId) return;
+    if (data.type === "stage") {
+      try { activeJob.onStage?.(data.stage); } catch (_) {}
+      return;
+    }
+    if (data.type === "downloadProgress") {
+      try { onDownloadProgress?.(data); } catch (_) {}
+      return;
+    }
+    if (data.type === "engine") {
+      try { onEngine?.(data.device); } catch (_) {}
+      return;
+    }
+    if (data.type === "segment") {
+      if (data.segment) {
+        try { activeJob.onSegment?.(data.segment); } catch (_) {}
+      }
+      return;
+    }
+    if (data.type === "done") {
+      const job = activeJob;
+      activeJob = null;
+      job.resolve({
+        text: data.text || "",
+        segments: data.segments || [],
+        device: data.device || null
+      });
+      return;
+    }
+    if (data.type === "error") {
+      rejectActive(new Error(data.error || "Transcription failed"));
+    }
+  };
+  worker.onerror = (event) => {
+    const detail = formatWorkerErrorEvent(event);
+    console.error("[panel] whisper worker errored", event);
+    worker.terminate();
+    closed = true;
+    rejectActive(new Error(detail || "Worker error (no details from runtime)"));
+  };
+  worker.onmessageerror = (event) => {
+    console.error("[panel] whisper worker message error", event);
+    worker.terminate();
+    closed = true;
+    rejectActive(new Error("Worker message error (postMessage cloning failed)"));
+  };
+
+  return {
+    transcribe(pcm16k, { onSegment, onStage } = {}) {
+      if (closed) return Promise.reject(new Error("Whisper worker is closed."));
+      if (activeJob) return Promise.reject(new Error("Whisper worker already has an active job."));
+
+      return new Promise((resolve, reject) => {
+        const jobId = Math.random().toString(36).slice(2, 10);
+        activeJob = { jobId, resolve, reject, onSegment, onStage };
+
+        const pcm =
+          pcm16k instanceof Float32Array ? pcm16k : new Float32Array(pcm16k || []);
+        const transferablePcm =
+          pcm.byteOffset === 0 && pcm.byteLength === pcm.buffer.byteLength
+            ? pcm
+            : new Float32Array(pcm);
+
+        try {
+          worker.postMessage(
+            {
+              type: "transcribe",
+              jobId,
+              modelId: modelId || "Xenova/whisper-small.en",
+              pcm: transferablePcm,
+              language: "english"
+            },
+            [transferablePcm.buffer]
+          );
+        } catch (error) {
+          activeJob = null;
+          reject(error);
+        }
+      });
+    },
+    terminate() {
+      if (closed) return;
+      closed = true;
+      worker.terminate();
+      rejectActive(new Error("Whisper worker terminated."));
+    }
+  };
 }
 
 async function openRecordingsFolder() {
