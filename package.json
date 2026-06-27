@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "name": "tab-recorder",
-  "version": "1.9.2",
+  "version": "1.10.0",
   "scripts": {
     "test": "vitest run",
     "test:unit": "vitest run",
