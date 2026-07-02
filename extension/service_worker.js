@@ -1,7 +1,7 @@
 // Background service worker for Tab Recorder.
 //
-// The panel page does its own getDisplayMedia recording; the service worker
-// only persists session metadata in chrome.storage.local, surfaces orphan
+// Provides tab stream IDs for programmatic capture (no picker dialog),
+// persists session metadata in chrome.storage.local, surfaces orphan
 // .webm files Chrome's downloads tracked, and handles delete cleanup.
 
 import { makeId } from "./lib/utils.js";
@@ -98,6 +98,7 @@ export async function saveSessionFromPanel(payload) {
   }
   const startedAt = Number(payload.startedAt) || Date.now();
   const endedAt = Number(payload.endedAt) || Date.now();
+  const durationMs = Math.max(0, Number(payload.durationMs) || (endedAt - startedAt));
   const session = {
     id: String(payload.id || makeId()),
     tabId: null,
@@ -106,7 +107,7 @@ export async function saveSessionFromPanel(payload) {
     tabUrl: String(payload.tabUrl || ""),
     startedAt,
     endedAt,
-    durationMs: Math.max(0, Number(payload.durationMs || endedAt - startedAt)),
+    durationMs,
     status: "complete",
     fileName: String(payload.fileName || ""),
     downloadId: Number.isInteger(payload.downloadId) ? payload.downloadId : null,
@@ -225,7 +226,7 @@ export async function getOrphanDownloads() {
   }
 
   const knownDownloadIds = new Set(
-    stored.map((s) => s?.downloadId).filter(Number.isInteger)
+    stored.flatMap((s) => [s?.downloadId, s?.mp3DownloadId]).filter(Number.isInteger)
   );
 
   // Synthesized rows always come back with durationMs = 0; the panel side

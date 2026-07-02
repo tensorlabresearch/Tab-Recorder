@@ -43,12 +43,27 @@ import {
   canDecodeWebmOpusWithWebCodecs,
   decodeWebmOpusChunks
 } from "./lib/webmOpusDecoder.js";
+import { compileFilter } from "./lib/filterExpression.js";
+import {
+  getAutocompleteContext,
+  applySuggestion,
+} from "./lib/filterAutocomplete.js";
+import {
+  enqueue as enqueueJob,
+  subscribe as subscribeToJobQueue,
+  cancel as cancelJob,
+  cancelAll as cancelAllJobs,
+  clearFinished as clearFinishedJobs,
+  updateJobProgress,
+} from "./lib/jobQueue.js";
 
 const statusEl = document.getElementById("status");
 const recordingStatusEl = document.getElementById("recording-status");
 const elapsedEl = document.getElementById("elapsed");
 const tabLevelEl = document.getElementById("tab-level");
 const micLevelEl = document.getElementById("mic-level");
+const tabMuteBtn = document.getElementById("tab-mute-btn");
+const micMuteBtn = document.getElementById("mic-mute-btn");
 const preRecordEl = document.getElementById("pre-record");
 const recordingEl = document.getElementById("recording");
 const meetingLabelInput = document.getElementById("meeting-label");
@@ -64,11 +79,11 @@ const recordingsSectionEl = document.getElementById("recordings-section");
 const recordingsListEl = document.getElementById("recordings-list");
 const refreshRecordingsButton = document.getElementById("refresh-recordings-btn");
 const openFolderButton = document.getElementById("open-folder-btn");
+const combineTranscriptsBtn = document.getElementById("combine-transcripts-btn");
+const deleteSelectedBtn = document.getElementById("delete-selected-btn");
+const bulkActionsEl = document.getElementById("bulk-actions");
 const folderNameEl = document.getElementById("folder-name");
 const pickFolderButton = document.getElementById("pick-folder-btn");
-
-const micMuteBtn = document.getElementById("mic-mute-btn");
-const tabMuteBtn = document.getElementById("tab-mute-btn");
 
 const MIC_DEVICE_ID_KEY = "selectedMicDeviceId";
 const NO_MIC_VALUE = "__none__";
@@ -80,6 +95,9 @@ const FADE_SECONDS = 0.05;
 let mediaRecorder = null;
 let recordedChunks = [];
 let currentSession = null;
+let graph = freshGraph();
+let tabMuted = false;
+let micMuted = false;
 let elapsedTimerId = null;
 let levelRafId = null;
 let analyserBuffer = null;
@@ -89,11 +107,9 @@ let pauseStartedAt = null;
 let totalPausedMs = 0;
 let labelTimerId = null;
 let lastAutoLabel = "";
-
-let tabMuted = false;
-let micMuted = false;
-
-let graph = freshGraph();
+const selectedSessionIds = new Set();
+let dayCollapseInitialized = false;
+const collapsedDayKeys = new Set();
 
 export function freshGraph() {
   return {
@@ -133,10 +149,180 @@ async function init() {
 
   const filterInput = document.getElementById("recordings-filter");
   if (filterInput) {
+    const autocompleteEl = document.getElementById("filter-autocomplete");
+    const datepickerEl = document.getElementById("filter-datepicker");
+    const datepickerInput = document.getElementById("filter-datepicker-input");
+    let acSelectedIndex = 0;
+    let acContext = null;
+
     filterInput.addEventListener("input", () => {
-      recordingsFilter = filterInput.value.trim().toLowerCase();
+      recordingsFilter = filterInput.value.trim();
       applyRecordingsFilter();
+      refreshAutocomplete();
     });
+
+    filterInput.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Escape") return;
+      refreshAutocomplete();
+    });
+
+    filterInput.addEventListener("click", refreshAutocomplete);
+
+    filterInput.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" && acContext?.suggestions?.length) {
+        e.preventDefault();
+        acSelectedIndex = Math.min(acSelectedIndex + 1, acContext.suggestions.length - 1);
+        renderAutocomplete();
+      } else if (e.key === "ArrowUp" && acContext?.suggestions?.length) {
+        e.preventDefault();
+        acSelectedIndex = Math.max(acSelectedIndex - 1, 0);
+        renderAutocomplete();
+      } else if (e.key === "Enter" && acContext?.suggestions?.length && !autocompleteEl?.classList.contains("hidden")) {
+        e.preventDefault();
+        acceptSuggestion(acContext.suggestions[acSelectedIndex]);
+      } else if (e.key === "Escape") {
+        hideAutocomplete();
+        hideDatepicker();
+      } else if (e.key === "Tab" && acContext?.suggestions?.length && !autocompleteEl?.classList.contains("hidden")) {
+        e.preventDefault();
+        acceptSuggestion(acContext.suggestions[acSelectedIndex]);
+      }
+    });
+
+    filterInput.addEventListener("blur", () => {
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (active === datepickerInput || datepickerEl?.contains(active)) return;
+        hideAutocomplete();
+        hideDatepicker();
+      }, 150);
+    });
+
+    if (datepickerInput) {
+      datepickerInput.addEventListener("change", () => {
+        if (!datepickerInput.value) return;
+        const pos = filterInput.selectionStart ?? 0;
+        const text = filterInput.value;
+        const before = text.slice(0, pos);
+        const argStart = findDateArgStart(before);
+        if (argStart < 0) return;
+        const dateStr = datepickerInput.value;
+        const isRange = /date\.\s*range\s*\(/.test(before);
+        const hasComma = before.slice(before.lastIndexOf("date.")).includes(",");
+        const suffix = isRange && !hasComma ? '","' : '")';
+        const insertText = dateStr + suffix;
+        const newText = text.slice(0, argStart) + insertText + text.slice(pos);
+        filterInput.value = newText;
+        const newCursor = argStart + insertText.length;
+        filterInput.focus();
+        filterInput.setSelectionRange(newCursor, newCursor);
+        recordingsFilter = newText.trim();
+        applyRecordingsFilter();
+        hideDatepicker();
+        refreshAutocomplete();
+      });
+    }
+
+    function refreshAutocomplete() {
+      const pos = filterInput.selectionStart ?? 0;
+      const text = filterInput.value;
+      acContext = getAutocompleteContext(text, pos);
+
+      if (!acContext || acContext.phase === "none") {
+        hideAutocomplete();
+        hideDatepicker();
+        return;
+      }
+
+      if (acContext.phase === "date") {
+        hideAutocomplete();
+        showDatepicker();
+        return;
+      }
+
+      hideDatepicker();
+
+      if (acContext.suggestions.length === 0) {
+        hideAutocomplete();
+        return;
+      }
+
+      acSelectedIndex = 0;
+      renderAutocomplete();
+    }
+
+    function renderAutocomplete() {
+      if (!autocompleteEl || !acContext?.suggestions?.length) { hideAutocomplete(); return; }
+      autocompleteEl.innerHTML = "";
+      for (let i = 0; i < acContext.suggestions.length; i++) {
+        const s = acContext.suggestions[i];
+        const item = document.createElement("div");
+        item.className = "ac-item" + (i === acSelectedIndex ? " is-active" : "");
+        const label = document.createElement("span");
+        label.className = "ac-label";
+        label.textContent = s.label;
+        item.appendChild(label);
+        if (s.detail) {
+          const detail = document.createElement("span");
+          detail.className = "ac-detail";
+          detail.textContent = s.detail;
+          item.appendChild(detail);
+        }
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          acceptSuggestion(s);
+        });
+        autocompleteEl.appendChild(item);
+      }
+      autocompleteEl.classList.remove("hidden");
+    }
+
+    function acceptSuggestion(s) {
+      if (!s || !acContext) return;
+      const result = applySuggestion(filterInput.value, acContext.replaceStart, acContext.replaceEnd, s.insert);
+      filterInput.value = result.text;
+      filterInput.focus();
+      filterInput.setSelectionRange(result.cursorPos, result.cursorPos);
+      recordingsFilter = result.text.trim();
+      applyRecordingsFilter();
+      hideAutocomplete();
+      setTimeout(refreshAutocomplete, 0);
+    }
+
+    function hideAutocomplete() {
+      if (autocompleteEl) autocompleteEl.classList.add("hidden");
+    }
+
+    function showDatepicker() {
+      if (!datepickerEl) return;
+      const rect = filterInput.getBoundingClientRect();
+      const parentRect = filterInput.parentElement.getBoundingClientRect();
+      datepickerEl.style.left = `${rect.left - parentRect.left}px`;
+      datepickerEl.style.top = `${rect.bottom - parentRect.top + 4}px`;
+      datepickerEl.classList.remove("hidden");
+      if (datepickerInput) {
+        datepickerInput.value = "";
+        setTimeout(() => datepickerInput.focus(), 0);
+      }
+    }
+
+    function hideDatepicker() {
+      if (datepickerEl) datepickerEl.classList.add("hidden");
+    }
+
+    function findDateArgStart(before) {
+      const lastQuote = before.lastIndexOf('"');
+      if (lastQuote >= 0) return lastQuote + 1;
+      return -1;
+    }
+
+    const filterHelpBtn = document.getElementById("filter-help-btn");
+    const filterHelp = document.getElementById("filter-help");
+    if (filterHelpBtn && filterHelp) {
+      filterHelpBtn.addEventListener("click", () => {
+        filterHelp.classList.toggle("hidden");
+      });
+    }
   }
 
   micSelect.addEventListener("change", () => onMicSelectChange(micSelect.value));
@@ -165,11 +351,19 @@ async function init() {
     });
   });
 
-  tabMuteBtn?.addEventListener("click", () => {
-    toggleTabMute();
+  tabMuteBtn?.addEventListener("click", toggleTabMute);
+  micMuteBtn?.addEventListener("click", toggleMicMute);
+
+  combineTranscriptsBtn?.addEventListener("click", () => {
+    onCombineTranscripts().catch((error) => {
+      statusEl.textContent = `Combine failed: ${error?.message || error}`;
+    });
   });
-  micMuteBtn?.addEventListener("click", () => {
-    toggleMicMute();
+
+  deleteSelectedBtn?.addEventListener("click", () => {
+    onDeleteSelected().catch((error) => {
+      statusEl.textContent = `Delete failed: ${error?.message || error}`;
+    });
   });
 
   openSettingsButton.addEventListener("click", async () => {
@@ -239,6 +433,8 @@ async function init() {
     }
   });
 
+  initJobQueuePanel();
+
   loadAndRenderSessions()
     .then(() => enrichDurationsInBackground())
     .catch(() => {});
@@ -252,6 +448,115 @@ async function init() {
 
 function hideLoadingSplash() {
   loadingSplashEl?.classList.add("is-hidden");
+}
+
+const JOB_TYPE_ICONS = {
+  queued: '<span class="dot"></span>',
+  running: '<span class="spinner"></span>',
+  done: '<span class="check">&#x2713;</span>',
+  error: '<span class="cross">&#x2717;</span>',
+  cancelled: '<span class="cross">&#x2717;</span>',
+};
+
+function initJobQueuePanel() {
+  const panel = document.getElementById("job-queue-panel");
+  const listEl = document.getElementById("job-queue-list");
+  const clearBtn = document.getElementById("job-queue-clear");
+  const collapseBtn = document.getElementById("job-queue-collapse");
+  const titleEl = document.getElementById("job-queue-title");
+  if (!panel || !listEl) return;
+
+  collapseBtn?.addEventListener("click", () => {
+    panel.classList.toggle("is-collapsed");
+    collapseBtn.textContent = panel.classList.contains("is-collapsed") ? "+" : "\u2014";
+  });
+
+  clearBtn?.addEventListener("click", () => {
+    clearFinishedJobs();
+    cancelAllJobs();
+  });
+
+  const autoClearTimers = new Map();
+
+  subscribeToJobQueue((jobs) => {
+    if (jobs.length === 0) {
+      panel.classList.add("hidden");
+      autoClearTimers.clear();
+      return;
+    }
+    panel.classList.remove("hidden");
+
+    const pendingCount = jobs.filter((j) => j.status === "queued" || j.status === "running").length;
+    if (titleEl) {
+      titleEl.textContent = pendingCount > 0 ? `Jobs \u2014 ${pendingCount} pending` : "Jobs";
+    }
+
+    for (const job of jobs) {
+      if (job.status === "done" && !autoClearTimers.has(job.id)) {
+        const timer = setTimeout(() => {
+          autoClearTimers.delete(job.id);
+          clearFinishedJobs();
+        }, 30000);
+        autoClearTimers.set(job.id, timer);
+      }
+      if (job.status !== "done" && autoClearTimers.has(job.id)) {
+        clearTimeout(autoClearTimers.get(job.id));
+        autoClearTimers.delete(job.id);
+      }
+    }
+
+    listEl.innerHTML = "";
+    for (const job of jobs) {
+      const item = document.createElement("div");
+      item.className = `job-item is-${job.status}`;
+
+      const row = document.createElement("div");
+      row.className = "job-item-row";
+
+      const icon = document.createElement("span");
+      icon.className = "job-item-icon";
+      icon.innerHTML = JOB_TYPE_ICONS[job.status] || "";
+      row.appendChild(icon);
+
+      const label = document.createElement("span");
+      label.className = "job-item-label";
+      label.textContent = job.label;
+      row.appendChild(label);
+
+      if (job.status === "queued") {
+        const cancelBtnEl = document.createElement("button");
+        cancelBtnEl.className = "job-item-cancel";
+        cancelBtnEl.type = "button";
+        cancelBtnEl.title = "Cancel";
+        cancelBtnEl.textContent = "\u00d7";
+        cancelBtnEl.addEventListener("click", () => cancelJob(job.id));
+        row.appendChild(cancelBtnEl);
+      }
+
+      item.appendChild(row);
+
+      const session = document.createElement("div");
+      session.className = "job-item-session";
+      session.textContent = job.sessionLabel;
+      item.appendChild(session);
+
+      if (job.status === "running" && job.progressLabel) {
+        const prog = document.createElement("div");
+        prog.className = "job-item-progress";
+        prog.textContent = job.progressLabel;
+        item.appendChild(prog);
+      }
+
+      if (job.status === "error" && job.error) {
+        const err = document.createElement("div");
+        err.className = "job-item-error";
+        err.textContent = job.error;
+        item.appendChild(err);
+      }
+
+      listEl.appendChild(item);
+    }
+  });
 }
 
 function hasExtensionRuntime() {
@@ -489,8 +794,6 @@ async function onStartRecording() {
 }
 
 async function acquireMicStream(deviceId) {
-  // Echo cancellation + noise suppression cleans up room reverb and any
-  // ambient noise picked up by the mic.
   const audioConstraints = {
     echoCancellation: true,
     noiseSuppression: true,
@@ -509,9 +812,6 @@ function initGraph() {
   graph = freshGraph();
   graph.context = new AudioContext();
   graph.recordDestination = graph.context.createMediaStreamDestination();
-  // Note: tab + mic audio are routed only into recordDestination, never to
-  // graph.context.destination. Nothing plays back through the user's
-  // speakers while recording.
 }
 
 function attachTabStream(stream) {
@@ -610,7 +910,7 @@ function rampGain(gainNode, target, seconds) {
 
 function updateMicMeterVisibility() {
   const has = !!graph.mic.stream;
-  micLevelEl.parentElement.parentElement.style.opacity = has ? "1" : "0.4";
+  micLevelEl.parentElement.style.opacity = has ? "1" : "0.4";
 }
 
 function toggleTabMute() {
@@ -696,7 +996,6 @@ function setChanging(on) {
 async function onStopRecording() {
   if (!mediaRecorder) return;
   if (mediaRecorder.state !== "recording" && mediaRecorder.state !== "paused") return;
-  // Account for any active pause so durationMs is correct.
   if (mediaRecorder.state === "paused" && pauseStartedAt != null) {
     totalPausedMs += Date.now() - pauseStartedAt;
     pauseStartedAt = null;
@@ -769,7 +1068,7 @@ function resetRecordingUI() {
   elapsedEl.textContent = "00:00";
   tabLevelEl.style.width = "0%";
   micLevelEl.style.width = "0%";
-  micLevelEl.parentElement.parentElement.style.opacity = "1";
+  micLevelEl.parentElement.style.opacity = "1";
 }
 
 function startLabelTimer() {
@@ -777,8 +1076,6 @@ function startLabelTimer() {
   labelTimerId = setInterval(() => {
     const nowStr = defaultTimestampLabel();
     const currentVal = String(meetingLabelInput.value || "").trim();
-    // Only overwrite if the field still shows the last auto-generated label
-    // (i.e. the user hasn't typed anything custom).
     if (!currentVal || currentVal === lastAutoLabel) {
       meetingLabelInput.value = nowStr;
       lastAutoLabel = nowStr;
@@ -900,8 +1197,6 @@ async function saveBlob(blob, session) {
 
 async function persistSessionRecord(session, downloadId, mimeType) {
   const endedAt = Date.now();
-  // Subtract paused time so duration reflects actual recorded media length,
-  // not wall-clock time.
   const pausedDuringActive = pauseStartedAt != null ? endedAt - pauseStartedAt : 0;
   const durationMs = Math.max(0, endedAt - session.startedAt - totalPausedMs - pausedDuringActive);
   const payload = {
@@ -918,13 +1213,7 @@ async function persistSessionRecord(session, downloadId, mimeType) {
   };
   try {
     await chrome.runtime.sendMessage({ type: "save-session", session: payload });
-  } catch (_) {
-    // Service worker unavailable; the file is still on disk and will be ignored by the list.
-  }
-  // Best-effort: drop a .meta.json sidecar next to the recording so the duration
-  // is visible in other browsers that share this folder (they have no stored
-  // session record for it). Failure here is harmless — enrichment will write it
-  // later from whichever browser first probes the file.
+  } catch (_) {}
   try {
     const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" });
     if (handle) {
@@ -990,6 +1279,7 @@ let recordingsFilter = "";
 // session's fileName because that's stable even when a synthesized session
 // gets promoted to a stored one mid-operation.
 const inProgressFileNames = new Set();
+const queuedSessionActions = new Set();
 let operationsInFlight = 0;
 let deferredReload = false;
 
@@ -1057,11 +1347,134 @@ async function loadAndRenderSessions() {
     return;
   }
 
+  for (const h of recordingsListEl.querySelectorAll(".day-header")) {
+    if (h.classList.contains("is-collapsed")) collapsedDayKeys.add(h.dataset.dayKey);
+    else collapsedDayKeys.delete(h.dataset.dayKey);
+  }
+
   recordingsListEl.innerHTML = "";
-  for (const session of cachedMergedSessions) {
-    recordingsListEl.appendChild(renderSessionRow(session));
+
+  const todayKey = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  })();
+
+  if (!dayCollapseInitialized) {
+    const preGroups = groupSessionsByDay(cachedMergedSessions);
+    for (const g of preGroups) {
+      if (g.dayKey !== todayKey) collapsedDayKeys.add(g.dayKey);
+    }
+    dayCollapseInitialized = true;
+  }
+
+  const groups = groupSessionsByDay(cachedMergedSessions);
+  for (const group of groups) {
+    const isCollapsed = collapsedDayKeys.has(group.dayKey);
+
+    const dayHeader = document.createElement("div");
+    dayHeader.className = "day-header";
+    dayHeader.dataset.dayKey = group.dayKey;
+    if (isCollapsed) dayHeader.classList.add("is-collapsed");
+
+    const dayCheckbox = document.createElement("input");
+    dayCheckbox.type = "checkbox";
+    dayCheckbox.className = "day-select-all";
+    dayCheckbox.dataset.dayKey = group.dayKey;
+    dayCheckbox.title = "Select all recordings in this day";
+    dayCheckbox.addEventListener("change", () => {
+      const section = dayHeader.nextElementSibling;
+      if (!section) return;
+      const checked = dayCheckbox.checked;
+      for (const row of section.querySelectorAll(".recording-item")) {
+        const sid = row.dataset.sessionId;
+        const cb = row.querySelector(".recording-item-select");
+        if (!cb || cb.checked === checked) continue;
+        cb.checked = checked;
+        if (checked) {
+          if (sid) selectedSessionIds.add(sid);
+          row.classList.add("is-selected");
+        } else {
+          if (sid) selectedSessionIds.delete(sid);
+          row.classList.remove("is-selected");
+        }
+      }
+      updateBulkActions();
+    });
+    dayHeader.appendChild(dayCheckbox);
+
+    const collapseBtn = document.createElement("button");
+    collapseBtn.type = "button";
+    collapseBtn.className = "day-collapse-btn";
+    if (isCollapsed) collapseBtn.classList.add("is-collapsed");
+    collapseBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="14" height="14" class="day-chevron" aria-hidden="true"><path fill="currentColor" d="M7 10l5 5 5-5z"/></svg>' +
+      `<span class="day-label">${group.dayLabel}</span>` +
+      `<span class="day-count">${group.sessions.length}</span>`;
+    collapseBtn.addEventListener("click", () => {
+      dayHeader.classList.toggle("is-collapsed");
+      collapseBtn.classList.toggle("is-collapsed");
+      const section = dayHeader.nextElementSibling;
+      if (section) section.classList.toggle("is-collapsed");
+      if (dayHeader.classList.contains("is-collapsed")) collapsedDayKeys.add(group.dayKey);
+      else collapsedDayKeys.delete(group.dayKey);
+    });
+    dayHeader.appendChild(collapseBtn);
+
+    const folderBtn = document.createElement("button");
+    folderBtn.type = "button";
+    folderBtn.className = "day-folder-btn";
+    folderBtn.title = "Open folder for this day";
+    folderBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/></svg>';
+    folderBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      revealDayFolder(group.dayKey);
+    });
+    dayHeader.appendChild(folderBtn);
+
+    const daySection = document.createElement("div");
+    daySection.className = "day-section";
+    if (isCollapsed) daySection.classList.add("is-collapsed");
+
+    for (const session of group.sessions) {
+      daySection.appendChild(renderSessionRow(session));
+    }
+
+    recordingsListEl.appendChild(dayHeader);
+    recordingsListEl.appendChild(daySection);
   }
   applyRecordingsFilter();
+}
+
+export function groupSessionsByDay(sessions) {
+  const groups = [];
+  const map = new Map();
+  for (const session of sessions) {
+    const ts = Number(session?.startedAt || 0);
+    const date = new Date(ts);
+    if (Number.isNaN(date.getTime())) continue;
+    const dayKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    if (!map.has(dayKey)) {
+      const dayLabel = formatDateLabel(date);
+      const group = { dayKey, dayLabel, sessions: [] };
+      map.set(dayKey, group);
+      groups.push(group);
+    }
+    map.get(dayKey).sessions.push(session);
+  }
+  return groups;
+}
+
+export function formatDateLabel(date) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const that = new Date(date);
+  that.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((today - that) / 86400000);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const base = `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+  if (diffDays === 0) return `Today — ${base}`;
+  if (diffDays === 1) return `Yesterday — ${base}`;
+  return base;
 }
 
 export function applyRecordingsFilter() {
@@ -1072,17 +1485,34 @@ export function applyRecordingsFilter() {
     for (const row of recordingsListEl.querySelectorAll(".recording-item")) {
       row.classList.remove("is-filtered-out");
     }
+    for (const header of recordingsListEl.querySelectorAll(".day-header")) {
+      header.classList.remove("is-filtered-out");
+    }
     if (countEl) countEl.textContent = "";
     return;
   }
+
+  const predicate = compileFilter(q);
+  const sessionMap = new Map();
+  for (const s of cachedMergedSessions) {
+    if (s?.id) sessionMap.set(s.id, s);
+  }
+
   let visible = 0;
   let total = 0;
-  for (const row of recordingsListEl.querySelectorAll(".recording-item")) {
-    total++;
-    const blob = row.dataset.searchBlob || "";
-    const match = blob.includes(q);
-    row.classList.toggle("is-filtered-out", !match);
-    if (match) visible++;
+  for (const section of recordingsListEl.querySelectorAll(".day-section")) {
+    let sectionVisible = 0;
+    for (const row of section.querySelectorAll(".recording-item")) {
+      total++;
+      const session = sessionMap.get(row.dataset.sessionId);
+      const match = session ? predicate(session) : false;
+      row.classList.toggle("is-filtered-out", !match);
+      if (match) { visible++; sectionVisible++; }
+    }
+    const header = section.previousElementSibling;
+    if (header?.classList.contains("day-header")) {
+      header.classList.toggle("is-filtered-out", sectionVisible === 0);
+    }
   }
   if (countEl) countEl.textContent = `${visible} of ${total}`;
 }
@@ -1130,6 +1560,25 @@ export function renderSessionRow(session) {
     session.transcriptText,
   ].filter(Boolean).join(" ").toLowerCase();
 
+  const hasTranscript = !!(session.transcriptText || session._fsTxtPath);
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "recording-item-select";
+  checkbox.checked = selectedSessionIds.has(session.id);
+  if (checkbox.checked) row.classList.add("is-selected");
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) {
+      selectedSessionIds.add(session.id);
+      row.classList.add("is-selected");
+    } else {
+      selectedSessionIds.delete(session.id);
+      row.classList.remove("is-selected");
+    }
+    updateBulkActions();
+  });
+  row.appendChild(checkbox);
+
   const top = document.createElement("div");
   top.className = "recording-item-top";
 
@@ -1169,19 +1618,20 @@ export function renderSessionRow(session) {
   const actions = document.createElement("div");
   actions.className = "recording-item-actions";
 
-  const isInProgress = inProgressFileNames.has(session.fileName);
-  if (isInProgress) row.classList.add("is-working");
+  const fileNameInProgress = inProgressFileNames.has(session.fileName);
+  const isQueued = (action) => queuedSessionActions.has(`${session.id}:${action}`);
+  if (fileNameInProgress) row.classList.add("is-working");
 
-  const hasTranscript = !!(session.transcriptText || session._fsTxtPath);
   if (!hasTranscript) {
     const transcribeBtn = document.createElement("button");
     transcribeBtn.type = "button";
     transcribeBtn.className = "row-action";
     transcribeBtn.dataset.action = "transcribe";
-    transcribeBtn.textContent = isInProgress ? "Working..." : "Transcribe";
-    if (isInProgress) {
+    const transcribing = fileNameInProgress || isQueued("transcribe");
+    transcribeBtn.textContent = transcribing ? "Working..." : "Transcribe";
+    if (transcribing) {
       transcribeBtn.disabled = true;
-      transcribeBtn.title = "An operation is already running on this recording.";
+      transcribeBtn.title = "Transcription is already queued or running.";
     }
     actions.appendChild(transcribeBtn);
   }
@@ -1191,70 +1641,44 @@ export function renderSessionRow(session) {
     mp3Btn.type = "button";
     mp3Btn.className = "row-action";
     mp3Btn.dataset.action = "convert-mp3";
-    mp3Btn.textContent = isInProgress ? "Working..." : "Convert to MP3";
-    if (isInProgress) {
+    const converting = fileNameInProgress || isQueued("convert-mp3");
+    mp3Btn.textContent = converting ? "Working..." : "Convert to MP3";
+    if (converting) {
       mp3Btn.disabled = true;
-      mp3Btn.title = "An operation is already running on this recording.";
+      mp3Btn.title = "MP3 conversion is already queued or running.";
     }
     actions.appendChild(mp3Btn);
   }
 
-  // The transcript icon (a badge in the meta row) doubles as the copy-to-
-  // clipboard control, so there is no separate "Copy Transcript" button.
-
-  // Show the Summarize button only until a summary exists; once it does, the
-  // summary icon badge becomes the re-summarize control.
   if (browserAiAvailable && hasTranscript && !session._fsSummaryPath) {
     const summarizeBtn = document.createElement("button");
     summarizeBtn.type = "button";
     summarizeBtn.className = "row-action";
     summarizeBtn.dataset.action = "summarize";
-    summarizeBtn.textContent = isInProgress ? "Working..." : "Summarize";
-    if (isInProgress) {
+    const summarizing = fileNameInProgress || isQueued("summarize");
+    summarizeBtn.textContent = summarizing ? "Working..." : "Summarize";
+    if (summarizing) {
       summarizeBtn.disabled = true;
-      summarizeBtn.title = "An operation is already running on this recording.";
+      summarizeBtn.title = "Summarization is already queued or running.";
     }
     actions.appendChild(summarizeBtn);
   }
 
-  // Diarize is opt-in (speakerDetectionEnabled) and requires Whisper segments
-  // — we only show it when the user enabled speaker detection AND the segments
-  // sidecar is available on disk (written by transcribeSessionImpl). Older
-  // recordings without a .segments.json need to be re-transcribed first.
-  // One pass is sufficient: once a diarized transcript exists we hide the
-  // button entirely (no "Re-diarize").
   if (speakerDetectionEnabled && session._fsSegmentsJsonPath && !session._fsDiarizedTxtPath) {
     const diarizeBtn = document.createElement("button");
     diarizeBtn.type = "button";
     diarizeBtn.className = "row-action";
     diarizeBtn.dataset.action = "diarize";
-    diarizeBtn.textContent = isInProgress ? "Working..." : "Diarize";
-    if (isInProgress) {
+    const diarizing = fileNameInProgress || isQueued("diarize");
+    diarizeBtn.textContent = diarizing ? "Working..." : "Diarize";
+    if (diarizing) {
       diarizeBtn.disabled = true;
-      diarizeBtn.title = "An operation is already running on this recording.";
+      diarizeBtn.title = "Diarization is already queued or running.";
     }
     actions.appendChild(diarizeBtn);
   }
 
   row.appendChild(actions);
-
-  // Trashcan in the top-right corner of the row. Same data-action="delete"
-  // so the existing onRecordingsListClick handler picks it up unchanged.
-  const deleteBtn = document.createElement("button");
-  deleteBtn.type = "button";
-  deleteBtn.className = "recording-item-delete";
-  deleteBtn.dataset.action = "delete";
-  deleteBtn.setAttribute("aria-label", "Delete recording");
-  deleteBtn.title = "Delete recording";
-  deleteBtn.innerHTML =
-    '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
-      '<path fill="currentColor" d="M9 3a1 1 0 0 0-1 1v1H4.5a1 1 0 1 0 0 2H5l1.07 12.14A2 2 0 0 0 8.06 21h7.88a2 2 0 0 0 1.99-1.86L19 7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9zm1 2h4V4h-4v1zm-.5 5a.75.75 0 0 1 .75.75v7.5a.75.75 0 1 1-1.5 0v-7.5A.75.75 0 0 1 9.5 10zm5 0a.75.75 0 0 1 .75.75v7.5a.75.75 0 1 1-1.5 0v-7.5A.75.75 0 0 1 14.5 10z"/>' +
-    '</svg>';
-  if (isInProgress) {
-    deleteBtn.disabled = true;
-    deleteBtn.title = "An operation is already running on this recording.";
-  }
-  row.appendChild(deleteBtn);
 
   const progress = document.createElement("div");
   progress.className = "recording-item-progress hidden";
@@ -1291,7 +1715,7 @@ export function renderSessionRow(session) {
 
   row.appendChild(progress);
 
-  if (isInProgress) {
+  if (fileNameInProgress) {
     // If this row was rebuilt mid-operation (e.g., user clicked Refresh while
     // a transcription was running), surface the spinner so they can see work
     // is still happening. The stage label is generic here since we no longer
@@ -1352,6 +1776,7 @@ export function setRowProgress(row, { label, fraction, visible, spinner } = {}) 
   if (label !== undefined) {
     const el = progress.querySelector('[data-role="progress-label"]');
     if (el) el.textContent = String(label);
+    updateJobProgress(String(label));
   }
   if (typeof fraction === "number") {
     const f = Math.max(0, Math.min(1, fraction));
@@ -1441,6 +1866,152 @@ export function makeBadgesForSession(session) {
   return wrap;
 }
 
+function updateBulkActions() {
+  if (!bulkActionsEl) return;
+  const count = selectedSessionIds.size;
+  if (count >= 1) {
+    bulkActionsEl.classList.remove("hidden");
+    if (combineTranscriptsBtn) {
+      const hasTranscripts = cachedMergedSessions.some(
+        (s) => selectedSessionIds.has(s.id) && (s.transcriptText || s._fsTxtPath || s._fsDiarizedTxtPath)
+      );
+      combineTranscriptsBtn.disabled = count < 2 || !hasTranscripts;
+      combineTranscriptsBtn.textContent = `Combine & Copy (${count}) Transcripts`;
+    }
+    if (deleteSelectedBtn) {
+      deleteSelectedBtn.textContent = `Delete (${count}) Recordings`;
+    }
+  } else {
+    bulkActionsEl.classList.add("hidden");
+  }
+}
+
+async function onCombineTranscripts() {
+  if (selectedSessionIds.size < 2) return;
+
+  const sessions = cachedMergedSessions
+    .filter((s) => selectedSessionIds.has(s.id))
+    .sort((a, b) => Number(b?.startedAt || 0) - Number(a?.startedAt || 0));
+
+  const handle = await getRecordingsDirectoryHandle().catch(() => null);
+
+  const parts = [];
+  for (const session of sessions) {
+    let text = session.transcriptText || "";
+    if (!text && session._fsTxtPath && handle) {
+      try {
+        text = (await readArtifactText(handle, session._fsTxtPath)) || "";
+      } catch (_) {}
+    }
+    if (!text && session._fsDiarizedTxtPath && handle) {
+      try {
+        text = (await readArtifactText(handle, session._fsDiarizedTxtPath)) || "";
+      } catch (_) {}
+    }
+    if (!text) continue;
+
+    const label = session.meetingLabel || session.tabTitle || "Untitled";
+    const date = formatSessionDate(session.startedAt);
+    parts.push(`=== ${label} (${date}) ===\n\n${text.trim()}\n`);
+  }
+
+  if (parts.length === 0) {
+    statusEl.textContent = "No transcripts found for the selected recordings.";
+    statusEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+
+  const combined = parts.join("\n");
+  let success = false;
+  try {
+    await navigator.clipboard.writeText(combined);
+    statusEl.textContent = `Combined ${parts.length} transcripts (oldest to newest) copied to clipboard.`;
+    success = true;
+  } catch (error) {
+    statusEl.textContent = `Copy failed: ${error?.message || error}`;
+  }
+  if (combineTranscriptsBtn) {
+    combineTranscriptsBtn.textContent = success ? "Copied!" : "Copy failed";
+    combineTranscriptsBtn.disabled = true;
+  }
+  statusEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  setTimeout(() => {
+    selectedSessionIds.clear();
+    for (const row of recordingsListEl.querySelectorAll(".recording-item")) {
+      row.classList.remove("is-selected");
+      const cb = row.querySelector(".recording-item-select");
+      if (cb) cb.checked = false;
+    }
+    for (const cb of recordingsListEl.querySelectorAll(".day-select-all")) {
+      cb.checked = false;
+    }
+    updateBulkActions();
+  }, success ? 800 : 2000);
+}
+
+async function onDeleteSelected() {
+  const count = selectedSessionIds.size;
+  if (count === 0) return;
+  if (!confirm(`Delete ${count} selected recording${count === 1 ? "" : "s"}? Audio files and any transcripts/MP3s will be removed.`)) return;
+
+  deleteSelectedBtn.disabled = true;
+  const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" }).catch(() => null);
+
+  for (const sessionId of selectedSessionIds) {
+    const session = cachedMergedSessions.find((s) => s?.id === sessionId);
+    if (!session) continue;
+    try {
+      if (handle && session?.fileName) {
+        await removeRecordingArtifact(handle, session.fileName, { extensions: ["webm", "mp3", "txt", "summary.md", "meta.json"] });
+      }
+    } catch (_) {}
+    try {
+      await chrome.runtime.sendMessage({ type: "delete-session", sessionId });
+    } catch (_) {}
+  }
+
+  selectedSessionIds.clear();
+  deleteSelectedBtn.disabled = false;
+  await loadAndRenderSessions();
+  updateBulkActions();
+  statusEl.textContent = `Deleted ${count} recording${count === 1 ? "" : "s"}.`;
+}
+
+function findSessionRow(sessionId) {
+  if (!recordingsListEl || !sessionId) return null;
+  try {
+    return recordingsListEl.querySelector(
+      `.recording-item[data-session-id="${CSS.escape(String(sessionId))}"]`
+    ) || null;
+  } catch (_) { return null; }
+}
+
+function freshSession(sessionId) {
+  return cachedMergedSessions.find((s) => s?.id === sessionId) || null;
+}
+
+const FAILURE_RE = /fail|error|not granted|not available|no transcript|could not|denied|skipped|already running/i;
+
+function makeJobRunner(sessionId, action, opFn) {
+  return async () => {
+    const s = freshSession(sessionId);
+    if (!s) throw new Error("Session not found");
+    const row = findSessionRow(sessionId);
+    const button = row?.querySelector(`button[data-action="${action}"]`) || null;
+    statusEl.textContent = "";
+    try {
+      await opFn(s, button, row);
+      const newStatus = statusEl.textContent.trim();
+      if (newStatus && FAILURE_RE.test(newStatus)) {
+        throw new Error(newStatus);
+      }
+    } finally {
+      queuedSessionActions.delete(`${sessionId}:${action}`);
+      await loadAndRenderSessions();
+    }
+  };
+}
+
 async function onRecordingsListClick(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -1449,25 +2020,6 @@ async function onRecordingsListClick(event) {
   if (!sessionId) return;
 
   const action = button.dataset.action;
-  if (action === "delete") {
-    if (!confirm("Delete this recording? The audio file (and any MP3/transcript next to it) will be removed.")) return;
-    button.disabled = true;
-    const session = await findSession(sessionId);
-    try {
-      try {
-        const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" });
-        if (handle && session?.fileName) {
-          await removeRecordingArtifact(handle, session.fileName, { extensions: ["webm", "mp3", "txt", "summary.md", "meta.json"] });
-        }
-      } catch (_) {}
-      await chrome.runtime.sendMessage({ type: "delete-session", sessionId });
-      await loadAndRenderSessions();
-    } catch (error) {
-      statusEl.textContent = `Delete failed: ${error?.message || error}`;
-      button.disabled = false;
-    }
-    return;
-  }
 
   if (action === "copy-transcript") {
     const session = await findSession(sessionId);
@@ -1522,7 +2074,17 @@ async function onRecordingsListClick(event) {
       statusEl.textContent = "Recording not found.";
       return;
     }
-    await convertSessionToMp3(session, button);
+    const actionKey = `${sessionId}:convert-mp3`;
+    if (queuedSessionActions.has(actionKey)) return;
+    queuedSessionActions.add(actionKey);
+    loadAndRenderSessions().catch(() => {});
+    enqueueJob({
+      type: "convert-mp3",
+      label: "Convert to MP3",
+      sessionId: session.id,
+      sessionLabel: session.meetingLabel || session.tabTitle || "Untitled",
+      run: makeJobRunner(sessionId, "convert-mp3", (s, btn, row) => convertSessionToMp3(s, btn, row)),
+    });
     return;
   }
 
@@ -1532,7 +2094,17 @@ async function onRecordingsListClick(event) {
       statusEl.textContent = "Recording not found.";
       return;
     }
-    await transcribeSession(session, button);
+    const actionKey = `${sessionId}:transcribe`;
+    if (queuedSessionActions.has(actionKey)) return;
+    queuedSessionActions.add(actionKey);
+    loadAndRenderSessions().catch(() => {});
+    enqueueJob({
+      type: "transcribe",
+      label: "Transcribe",
+      sessionId: session.id,
+      sessionLabel: session.meetingLabel || session.tabTitle || "Untitled",
+      run: makeJobRunner(sessionId, "transcribe", (s, btn, row) => transcribeSession(s, btn, row)),
+    });
     return;
   }
 
@@ -1542,7 +2114,17 @@ async function onRecordingsListClick(event) {
       statusEl.textContent = "Recording not found.";
       return;
     }
-    await summarizeSession(session, button);
+    const actionKey = `${sessionId}:summarize`;
+    if (queuedSessionActions.has(actionKey)) return;
+    queuedSessionActions.add(actionKey);
+    loadAndRenderSessions().catch(() => {});
+    enqueueJob({
+      type: "summarize",
+      label: "Summarize",
+      sessionId: session.id,
+      sessionLabel: session.meetingLabel || session.tabTitle || "Untitled",
+      run: makeJobRunner(sessionId, "summarize", (s, btn, row) => summarizeSession(s, btn, row)),
+    });
     return;
   }
 
@@ -1552,7 +2134,17 @@ async function onRecordingsListClick(event) {
       statusEl.textContent = "Recording not found.";
       return;
     }
-    await diarizeSession(session, button);
+    const actionKey = `${sessionId}:diarize`;
+    if (queuedSessionActions.has(actionKey)) return;
+    queuedSessionActions.add(actionKey);
+    loadAndRenderSessions().catch(() => {});
+    enqueueJob({
+      type: "diarize",
+      label: "Diarize",
+      sessionId: session.id,
+      sessionLabel: session.meetingLabel || session.tabTitle || "Untitled",
+      run: makeJobRunner(sessionId, "diarize", (s, btn, row) => diarizeSession(s, btn, row)),
+    });
     return;
   }
 }
@@ -1565,7 +2157,7 @@ async function refreshBrowserAiAvailability() {
   }
 }
 
-async function summarizeSession(session, button) {
+async function summarizeSession(session, button, row) {
   if (!browserAiAvailable) {
     statusEl.textContent = "Browser AI not available on this device.";
     return;
@@ -1588,7 +2180,7 @@ async function summarizeSession(session, button) {
     return;
   }
 
-  const row = button.closest(".recording-item");
+  row = row || button?.closest(".recording-item") || null;
   startOperation(session.fileName);
   if (row) {
     row.classList.add("is-working");
@@ -1619,7 +2211,6 @@ async function summarizeSession(session, button) {
     await writeRecordingArtifact(handle, session.fileName, blob, { extension: "summary.md" });
 
     statusEl.textContent = "Summary saved next to the recording.";
-    await loadAndRenderSessions();
   } catch (error) {
     statusEl.textContent = `Summarize failed: ${error?.message || error}`;
     if (row) setRowProgress(row, { visible: false });
@@ -1629,10 +2220,11 @@ async function summarizeSession(session, button) {
     }
   } finally {
     endOperation(session.fileName);
+    await loadAndRenderSessions();
   }
 }
 
-async function diarizeSession(session, button) {
+async function diarizeSession(session, button, row) {
   if (inProgressFileNames.has(session.fileName)) {
     statusEl.textContent = "Another operation is already running on this recording.";
     return;
@@ -1648,7 +2240,7 @@ async function diarizeSession(session, button) {
     return;
   }
 
-  const row = button?.closest(".recording-item");
+  row = row || button?.closest(".recording-item") || null;
   const originalLabel = button?.textContent;
   startOperation(session.fileName);
   if (row) {
@@ -1747,7 +2339,6 @@ async function diarizeSession(session, button) {
     statusEl.textContent =
       `Diarized transcript saved (${result.speakerCount} speaker${result.speakerCount === 1 ? "" : "s"}, ${result.utterances.length} utterances).`;
     setRowProgress(row, { label: "Done", spinner: false });
-    await loadAndRenderSessions();
   } catch (error) {
     console.error("[panel] diarization failed", error);
     statusEl.textContent = `Diarize failed: ${error?.message || error}`;
@@ -1759,6 +2350,7 @@ async function diarizeSession(session, button) {
   } finally {
     if (client) client.terminate();
     endOperation(session.fileName);
+    await loadAndRenderSessions();
   }
 }
 
@@ -1817,17 +2409,18 @@ async function ensureRecordingsHandle({ writable = false } = {}) {
   return handle;
 }
 
-async function convertSessionToMp3(session, button) {
+async function convertSessionToMp3(session, button, row) {
   startOperation(session?.fileName);
   try {
-    await convertSessionToMp3Impl(session, button);
+    await convertSessionToMp3Impl(session, button, row);
   } finally {
     endOperation(session?.fileName);
+    await loadAndRenderSessions();
   }
 }
 
-async function convertSessionToMp3Impl(session, button) {
-  const row = button.closest(".recording-item");
+async function convertSessionToMp3Impl(session, button, row) {
+  row = row || button?.closest(".recording-item") || null;
 
   let handle;
   try {
@@ -1837,15 +2430,13 @@ async function convertSessionToMp3Impl(session, button) {
     return;
   }
 
-  const originalLabel = button.textContent;
+  const originalLabel = button?.textContent || "";
   const restore = () => {
-    button.disabled = false;
-    button.textContent = originalLabel;
+    if (button) { button.disabled = false; button.textContent = originalLabel; }
     setRowProgress(row, { visible: false });
   };
 
-  button.disabled = true;
-  button.textContent = "Working...";
+  if (button) { button.disabled = true; button.textContent = "Working..."; }
   statusEl.textContent = "";
 
   setRowProgress(row, { label: "Reading", fraction: 0 });
@@ -1940,7 +2531,6 @@ async function convertSessionToMp3Impl(session, button) {
   } catch (_) {}
 
   statusEl.textContent = `MP3 saved: ${mp3FileName}`;
-  await loadAndRenderSessions();
 }
 
 function encodeMp3InWorker(left, right, sampleRate, onProgress) {
@@ -1991,17 +2581,18 @@ function encodeMp3InWorker(left, right, sampleRate, onProgress) {
   });
 }
 
-async function transcribeSession(session, button) {
+async function transcribeSession(session, button, row) {
   startOperation(session?.fileName);
   try {
-    await transcribeSessionImpl(session, button);
+    await transcribeSessionImpl(session, button, row);
   } finally {
     endOperation(session?.fileName);
+    await loadAndRenderSessions();
   }
 }
 
-async function transcribeSessionImpl(session, button) {
-  const row = button.closest(".recording-item");
+async function transcribeSessionImpl(session, button, row) {
+  row = row || button?.closest(".recording-item") || null;
 
   let handle;
   try {
@@ -2011,16 +2602,14 @@ async function transcribeSessionImpl(session, button) {
     return;
   }
 
-  const originalLabel = button.textContent;
+  const originalLabel = button?.textContent || "";
   const restore = () => {
-    button.disabled = false;
-    button.textContent = originalLabel;
+    if (button) { button.disabled = false; button.textContent = originalLabel; }
     setRowProgress(row, { visible: false });
     clearTranscriptPreview(row);
   };
 
-  button.disabled = true;
-  button.textContent = "Working...";
+  if (button) { button.disabled = true; button.textContent = "Working..."; }
   statusEl.textContent = "";
 
   // Transcription has no truthful percentage — switch the row's progress
@@ -2180,8 +2769,6 @@ async function transcribeSessionImpl(session, button) {
 
   await maybeAutoSummarize(session, result.text, handle, row);
   await maybeAutoDiarize(session, result.segments, handle, row);
-
-  await loadAndRenderSessions();
 }
 
 async function maybeAutoDiarize(session, segments, handle, row) {
@@ -2677,6 +3264,30 @@ async function openRecordingsFolder() {
       return;
     }
     chrome.downloads.showDefaultFolder();
+  } catch (error) {
+    statusEl.textContent = `Could not open folder: ${error?.message || error}`;
+  }
+}
+
+async function revealDayFolder(dayKey) {
+  if (!dayKey) return;
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  try {
+    const matches = await chrome.downloads
+      .search({
+        filenameRegex: `Tab Recorder/${escapeRe(dayKey)}/.*\\.webm$`,
+        orderBy: ["-startTime"],
+        limit: 1,
+        exists: true
+      })
+      .catch(() => []);
+    if (Array.isArray(matches) && matches.length > 0) {
+      chrome.downloads.show(matches[0].id);
+      statusEl.textContent = `Opened folder for ${dayKey}.`;
+      return;
+    }
+    chrome.downloads.showDefaultFolder();
+    statusEl.textContent = "Opened your downloads folder (day folder not found in download history).";
   } catch (error) {
     statusEl.textContent = `Could not open folder: ${error?.message || error}`;
   }

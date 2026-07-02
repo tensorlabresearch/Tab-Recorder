@@ -24,6 +24,9 @@ export default defineConfig({
         'extension/lib/diarizedTranscript.js',
         'extension/lib/webmOpusDecoder.js',
         'extension/lib/speakerEmbedModel.js',
+        'extension/lib/filterExpression.js',
+        'extension/lib/filterAutocomplete.js',
+        'extension/lib/jobQueue.js',
       ],
       exclude: [
         'extension/lib/transformersJs/**',

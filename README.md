@@ -116,6 +116,8 @@ Open Settings from the panel:
 - **Clear Model Cache**: deletes the cached model files.
 - **Auto-transcribe new recordings**: when on, transcription starts the
   moment a recording stops.
+- Recordings longer than 30 minutes are transcribed in bounded chunks, then
+  glued into one transcript and one timestamp sidecar.
 - **Browser AI**: status row that reports whether Chrome's built-in
   Gemini Nano model is available on this device, plus the
   **Auto-summarize after transcription** toggle (disabled until Nano

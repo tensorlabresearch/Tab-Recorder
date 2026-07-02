@@ -21,6 +21,9 @@ import {
   setRowProgress,
   startOperation,
   endOperation,
+  applyRecordingsFilter,
+  groupSessionsByDay,
+  formatDateLabel,
 } from "../extension/panel.js";
 
 describe("freshGraph", () => {
@@ -130,6 +133,73 @@ describe("formatDurationHuman", () => {
 
   it("handles negative values", () => {
     expect(formatDurationHuman(-5000)).toBe("0s");
+  });
+});
+
+describe("groupSessionsByDay", () => {
+  it("returns empty array for empty input", () => {
+    expect(groupSessionsByDay([])).toEqual([]);
+  });
+
+  it("skips sessions with invalid timestamps", () => {
+    const sessions = [
+      { id: "a", startedAt: "not-a-number" },
+    ];
+    expect(groupSessionsByDay(sessions)).toEqual([]);
+  });
+
+  it("groups sessions by day", () => {
+    const ts1 = new Date(2026, 0, 15, 10, 0, 0).getTime();
+    const ts2 = new Date(2026, 0, 15, 14, 30, 0).getTime();
+    const ts3 = new Date(2026, 0, 16, 9, 0, 0).getTime();
+    const sessions = [
+      { id: "a", startedAt: ts1 },
+      { id: "b", startedAt: ts2 },
+      { id: "c", startedAt: ts3 },
+    ];
+    const groups = groupSessionsByDay(sessions);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].dayKey).toBe("2026-01-15");
+    expect(groups[0].sessions).toHaveLength(2);
+    expect(groups[1].dayKey).toBe("2026-01-16");
+    expect(groups[1].sessions).toHaveLength(1);
+  });
+
+  it("preserves session order within groups", () => {
+    const ts1 = new Date(2026, 0, 15, 10, 0, 0).getTime();
+    const ts2 = new Date(2026, 0, 15, 14, 30, 0).getTime();
+    const sessions = [
+      { id: "a", startedAt: ts1 },
+      { id: "b", startedAt: ts2 },
+    ];
+    const groups = groupSessionsByDay(sessions);
+    expect(groups[0].sessions[0].id).toBe("a");
+    expect(groups[0].sessions[1].id).toBe("b");
+  });
+});
+
+describe("formatDateLabel", () => {
+  it("prefixes Today for current date", () => {
+    const now = new Date();
+    const label = formatDateLabel(now);
+    expect(label).toContain("Today —");
+  });
+
+  it("prefixes Yesterday for previous date", () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const label = formatDateLabel(yesterday);
+    expect(label).toContain("Yesterday —");
+  });
+
+  it("returns plain date for older dates", () => {
+    const old = new Date(2020, 5, 10);
+    const label = formatDateLabel(old);
+    expect(label).not.toContain("Today");
+    expect(label).not.toContain("Yesterday");
+    expect(label).toContain("Jun");
+    expect(label).toContain("10");
+    expect(label).toContain("2020");
   });
 });
 
@@ -317,6 +387,12 @@ describe("buildFileName", () => {
   });
 });
 
+describe("applyRecordingsFilter", () => {
+  it("returns early when recordingsListEl is null", () => {
+    expect(() => applyRecordingsFilter()).not.toThrow();
+  });
+});
+
 describe("defaultTimestampLabel", () => {
   it("returns a YYYY-MM-DD HH:MM formatted label", () => {
     vi.useFakeTimers();
@@ -412,12 +488,12 @@ describe("renderSessionRow", () => {
     expect(mp3Btn).toBeNull();
   });
 
-  it("shows delete button", () => {
+  it("shows a selection checkbox", () => {
     const session = { id: "s1", meetingLabel: "Test", startedAt: Date.now(), fileName: "test.webm" };
     const row = renderSessionRow(session);
-    const deleteBtn = row.querySelector('[data-action="delete"]');
-    expect(deleteBtn).toBeTruthy();
-    expect(deleteBtn.getAttribute("aria-label")).toBe("Delete recording");
+    const checkbox = row.querySelector(".recording-item-select");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.type).toBe("checkbox");
   });
 
   it("shows description when present", () => {
