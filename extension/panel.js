@@ -369,10 +369,13 @@ async function init() {
   openSettingsButton.addEventListener("click", async () => {
     await chrome.tabs.create({ url: chrome.runtime.getURL("settings.html") });
   });
-  const openSupportLink = document.getElementById("open-support-link");
-  openSupportLink?.addEventListener("click", async (e) => {
-    e.preventDefault();
+  const buyCoffeeBtn = document.getElementById("buy-coffee-btn");
+  const openCoffeeSupportTab = async () => {
     await chrome.tabs.create({ url: chrome.runtime.getURL("support.html") });
+  };
+  buyCoffeeBtn?.addEventListener("click", openCoffeeSupportTab);
+  buyCoffeeBtn?.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); await openCoffeeSupportTab(); }
   });
 
   navigator.mediaDevices.addEventListener("devicechange", () => {
@@ -589,9 +592,11 @@ function setupLocalPreviewMode() {
   openSettingsButton?.addEventListener("click", () => {
     window.location.href = "settings.html";
   });
-  document.getElementById("open-support-link")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    window.location.href = "support.html";
+  const buyCoffeeBtn = document.getElementById("buy-coffee-btn");
+  const openCoffeeSupport = () => { window.location.href = "support.html"; };
+  buyCoffeeBtn?.addEventListener("click", openCoffeeSupport);
+  buyCoffeeBtn?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCoffeeSupport(); }
   });
 
   hideLoadingSplash();

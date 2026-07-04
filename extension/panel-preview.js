@@ -28,8 +28,7 @@ if (window.location.protocol === "file:") {
     document.getElementById("open-settings-btn")?.addEventListener("click", () => {
       window.location.href = "settings.html";
     });
-    document.getElementById("open-support-link")?.addEventListener("click", (event) => {
-      event.preventDefault();
+    document.getElementById("buy-coffee-btn")?.addEventListener("click", () => {
       window.location.href = "support.html";
     });
     splash?.classList.add("is-hidden");
