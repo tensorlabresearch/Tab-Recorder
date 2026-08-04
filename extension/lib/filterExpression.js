@@ -14,6 +14,11 @@
  *   has("transcript")                   — session has a transcript
  *   has("mp3")                          — session has an MP3
  *   has("summary")                      — session has a summary
+ *   has("tag")                          — session has at least one tag
+ *   tag("name")                         — session has the exact tag (case-insensitive);
+ *                                         multiple args are OR'd: tag("a","b")
+ *   tags.contains("text")               — case-insensitive substring over tags
+ *   tags.matches("regex")               — case-insensitive regex over tags
  *
  * Combine with && (AND) and || (OR), and parentheses for grouping.
  * Plain text with no CEL operators falls back to substring match on
@@ -31,6 +36,7 @@
  * @property {string} [_fsMp3Path]
  * @property {string} [_fsTxtPath]
  * @property {string} [_fsDiarizedTxtPath]
+ * @property {string[]} [tags]
  */
 
 // ── Tokenizer ─────────────────────────────────────────────
@@ -257,6 +263,24 @@ function evaluateCall(node, session) {
     if (arg0 === "transcript") return !!(session.transcriptText || session._fsTxtPath || session._fsDiarizedTxtPath);
     if (arg0 === "mp3")        return !!(session._fsHasMp3 || session._fsMp3Path);
     if (arg0 === "summary")    return !!(session._fsSummaryPath || session.description);
+    if (arg0 === "tag")        return Array.isArray(session.tags) && session.tags.length > 0;
+    return false;
+  }
+
+  if (field === "tag") {
+    const sessionTags = Array.isArray(session.tags) ? session.tags : [];
+    const lowered = sessionTags.map((t) => String(t).toLowerCase());
+    if (args.length === 0) return sessionTags.length > 0;
+    return args.some((a) => lowered.includes(String(a?.value ?? "").toLowerCase()));
+  }
+
+  if (field === "tags") {
+    const text = (Array.isArray(session.tags) ? session.tags : []).join(" ").toLowerCase();
+    if (op === "contains") return text.includes(String(arg0).toLowerCase());
+    if (op === "matches") {
+      try { return new RegExp(arg0, "i").test(text); }
+      catch (_) { return false; }
+    }
     return false;
   }
 
@@ -281,7 +305,7 @@ function plainMatch(text, session) {
 
 // ── Public API ────────────────────────────────────────────
 
-const CEL_PATTERN = /^\s*\(?\s*(title|transcript|summary|date|has)\s*[.(]/;
+const CEL_PATTERN = /^\s*\(?\s*(title|transcript|summary|date|has|tag|tags)\s*[.(]/;
 
 /**
  * Returns true if the input looks like a CEL expression (vs plain text).

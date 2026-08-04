@@ -809,6 +809,143 @@ button:disabled {
   z-index: 1;
 }
 
+/* Tag editor trigger — sits just left of the selection checkbox in the
+   top-right corner of each recording card. */
+.recording-item-tag-btn {
+  position: absolute;
+  top: 9px;
+  right: 32px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.recording-item-tag-btn:hover {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.recording-item-tag-btn.is-open {
+  color: var(--accent);
+  border-color: var(--accent-glow);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Read-only tag chips shown on the card meta line. */
+.recording-item-tags {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.recording-item-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+/* Tag editor popover anchored inside the card. */
+.tag-editor-popover {
+  position: absolute;
+  top: 34px;
+  right: 8px;
+  z-index: 5;
+  width: 240px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg, rgba(12, 3, 5, 0.98));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tag-editor-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 20px;
+}
+
+.tag-editor-empty {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.tag-editor-chip {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.tag-editor-chip:hover {
+  border-color: var(--tl-red-hot, #ef233c);
+  color: var(--tl-red-hot, #ef233c);
+}
+
+.tag-editor-input {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  outline: none;
+}
+
+.tag-editor-input:focus {
+  border-color: var(--accent);
+}
+
+.tag-editor-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.tag-editor-suggestions.hidden {
+  display: none;
+}
+
+.tag-editor-suggestion {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.tag-editor-suggestion:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .recording-item.is-filtered-out {
   display: none;
 }

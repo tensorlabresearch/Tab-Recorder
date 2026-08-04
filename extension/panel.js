@@ -420,6 +420,14 @@ async function init() {
 
   recordingsListEl?.addEventListener("click", onRecordingsListClick);
 
+  // Clicking anywhere outside an open tag editor closes it.
+  document.addEventListener("click", (event) => {
+    if (!openTagEditorSessionId) return;
+    if (event.target.closest(".tag-editor-popover")) return;
+    if (event.target.closest(".recording-item-tag-btn")) return;
+    closeTagEditor();
+  });
+
   chrome.storage.onChanged.addListener((changes, area) => {
     // Only the session record store now triggers re-renders; the duration
     // cache has been retired in favor of always re-scanning disk.
@@ -1194,10 +1202,48 @@ async function saveBlob(blob, session) {
       filename: `Tab Recorder/${session.fileName}`,
       saveAs: false
     });
+    await waitForDownloadComplete(downloadId);
     return { downloadId };
   } finally {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   }
+}
+
+/**
+ * Wait for a chrome.downloads download to reach the "complete" state.
+ * In some browsers (notably Brave) the download API writes the file to disk
+ * asynchronously, so the file is not yet readable immediately after
+ * chrome.downloads.download() resolves. Without this wait, the auto-transcribe
+ * step fires before the file exists and fails with "File not found".
+ *
+ * Falls back after a 30s timeout so a stuck download doesn't block forever.
+ */
+function waitForDownloadComplete(downloadId, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try { chrome.downloads.onChanged.removeListener(listener); } catch (_) {}
+      resolve();
+    };
+
+    const listener = (delta) => {
+      if (delta.id !== downloadId) return;
+      if (delta.state && (delta.state.current === "complete" || delta.state.current === "interrupted")) {
+        finish();
+      }
+    };
+
+    try {
+      chrome.downloads.onChanged.addListener(listener);
+    } catch (_) {
+      finish();
+      return;
+    }
+
+    setTimeout(finish, timeoutMs);
+  });
 }
 
 async function persistSessionRecord(session, downloadId, mimeType) {
@@ -1448,6 +1494,16 @@ async function loadAndRenderSessions() {
     recordingsListEl.appendChild(daySection);
   }
   applyRecordingsFilter();
+
+  // If a tag editor was open before this re-render (e.g. a save triggered
+  // the storage-changed reload), restore it on the freshly rendered row.
+  if (openTagEditorSessionId) {
+    const sessionId = openTagEditorSessionId;
+    openTagEditorSessionId = null;
+    const row = findSessionRow(sessionId);
+    const btn = row?.querySelector(".recording-item-tag-btn");
+    if (btn) openTagEditor(btn, sessionId);
+  }
 }
 
 export function groupSessionsByDay(sessions) {
@@ -1535,6 +1591,208 @@ async function fetchStoredSessions() {
   }
 }
 
+// ----- Free-form tagging -----
+// Tags live on each session record (`session.tags`, array of lowercase
+// strings). A separate `tagUsage` map in storage tracks the last time a user
+// *applied* a tag (user interaction, not recording creation), which powers
+// the "top 10 recently used" suggestions in the tag editor popover.
+
+const TAG_USAGE_KEY = "tagUsage";
+const TAG_SUGGESTION_LIMIT = 10;
+
+// Session whose tag editor popover is currently open. Re-renders (triggered
+// by storage changes after a tag save) wipe the DOM, so we remember it here
+// and re-open the editor after loadAndRenderSessions completes.
+let openTagEditorSessionId = null;
+
+async function fetchTagUsage() {
+  try {
+    const result = await chrome.storage.local.get(TAG_USAGE_KEY);
+    return result?.[TAG_USAGE_KEY] && typeof result[TAG_USAGE_KEY] === "object"
+      ? result[TAG_USAGE_KEY]
+      : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function touchTagUsage(tag) {
+  try {
+    const usage = await fetchTagUsage();
+    usage[tag] = Date.now();
+    // Keep the map bounded — drop the least-recently-used entries past 100.
+    const entries = Object.entries(usage).sort((a, b) => b[1] - a[1]).slice(0, 100);
+    await chrome.storage.local.set({ [TAG_USAGE_KEY]: Object.fromEntries(entries) });
+  } catch (_) {}
+}
+
+function collectKnownTags(sessions) {
+  const set = new Set();
+  for (const s of sessions) {
+    if (Array.isArray(s?.tags)) s.tags.forEach((t) => set.add(String(t)));
+  }
+  return set;
+}
+
+async function fetchTagSuggestions() {
+  // Top 10 most recently *applied* tags, followed by any other known tags
+  // (alphabetical) so the picker still surfaces tags that exist on
+  // recordings but were never applied via the editor (e.g. legacy data).
+  const usage = await fetchTagUsage();
+  const recent = Object.entries(usage)
+    .sort((a, b) => b[1] - a[1])
+    .map(([tag]) => tag)
+    .slice(0, TAG_SUGGESTION_LIMIT);
+  const known = collectKnownTags(cachedMergedSessions);
+  const extras = [...known].filter((t) => !recent.includes(t)).sort();
+  return [...recent, ...extras];
+}
+
+async function persistSessionTags(sessionId, tags) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "update-session-tags",
+      sessionId,
+      tags
+    });
+    if (response?.ok) {
+      const session = cachedMergedSessions.find((s) => s?.id === sessionId);
+      if (session) session.tags = response.session?.tags ?? tags;
+    }
+  } catch (_) {}
+}
+
+function normalizeTag(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, "-").slice(0, 40);
+}
+
+function closeTagEditor() {
+  openTagEditorSessionId = null;
+  document.querySelectorAll(".tag-editor-popover").forEach((el) => el.remove());
+  document.querySelectorAll(".recording-item-tag-btn.is-open").forEach((el) => el.classList.remove("is-open"));
+}
+
+async function openTagEditor(button, sessionId) {
+  const row = button.closest(".recording-item");
+  const session = cachedMergedSessions.find((s) => s?.id === sessionId);
+  if (!row || !session) return;
+
+  // Toggle behavior: clicking the open button closes the editor.
+  if (button.classList.contains("is-open")) {
+    closeTagEditor();
+    return;
+  }
+  closeTagEditor();
+  button.classList.add("is-open");
+  openTagEditorSessionId = sessionId;
+
+  const popover = document.createElement("div");
+  popover.className = "tag-editor-popover";
+  popover.dataset.sessionId = sessionId;
+
+  const chipList = document.createElement("div");
+  chipList.className = "tag-editor-chips";
+  popover.appendChild(chipList);
+
+  const renderChips = () => {
+    chipList.innerHTML = "";
+    const tags = Array.isArray(session.tags) ? session.tags : [];
+    if (!tags.length) {
+      const hint = document.createElement("span");
+      hint.className = "tag-editor-empty";
+      hint.textContent = "No tags yet";
+      chipList.appendChild(hint);
+      return;
+    }
+    for (const tag of tags) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "tag-editor-chip";
+      chip.textContent = `${tag} ×`;
+      chip.title = `Remove tag "${tag}"`;
+      chip.addEventListener("click", async () => {
+        session.tags = tags.filter((t) => t !== tag);
+        await persistSessionTags(sessionId, session.tags);
+        renderChips();
+      });
+      chipList.appendChild(chip);
+    }
+  };
+  renderChips();
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Add tag…";
+  input.className = "tag-editor-input";
+  popover.appendChild(input);
+
+  const suggestions = document.createElement("div");
+  suggestions.className = "tag-editor-suggestions";
+  popover.appendChild(suggestions);
+
+  const allSuggestions = await fetchTagSuggestions();
+
+  const renderSuggestions = (filter) => {
+    suggestions.innerHTML = "";
+    const current = new Set(Array.isArray(session.tags) ? session.tags : []);
+    const needle = String(filter || "").trim().toLowerCase();
+    const matches = allSuggestions
+      .filter((t) => !current.has(t))
+      .filter((t) => !needle || t.includes(needle))
+      .slice(0, TAG_SUGGESTION_LIMIT);
+    if (!matches.length) {
+      suggestions.classList.add("hidden");
+      return;
+    }
+    suggestions.classList.remove("hidden");
+    for (const tag of matches) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "tag-editor-suggestion";
+      item.textContent = tag;
+      item.addEventListener("click", () => applyTag(tag));
+      suggestions.appendChild(item);
+    }
+  };
+  renderSuggestions("");
+
+  const applyTag = async (raw) => {
+    const tag = normalizeTag(raw);
+    if (!tag) return;
+    const tags = Array.isArray(session.tags) ? session.tags : [];
+    if (!tags.includes(tag)) {
+      session.tags = [...tags, tag];
+      await persistSessionTags(sessionId, session.tags);
+      await touchTagUsage(tag);
+      if (!allSuggestions.includes(tag)) allSuggestions.unshift(tag);
+      renderChips();
+    } else {
+      // Re-applying an existing tag still counts as interaction for recency.
+      await touchTagUsage(tag);
+    }
+    input.value = "";
+    renderSuggestions("");
+  };
+
+  input.addEventListener("input", () => renderSuggestions(input.value));
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyTag(input.value);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeTagEditor();
+    }
+  });
+
+  // Prevent the row click delegate from treating clicks inside the popover
+  // as row actions.
+  popover.addEventListener("click", (event) => event.stopPropagation());
+
+  row.appendChild(popover);
+  input.focus();
+}
+
 async function fetchDownloadOrphans() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "get-orphan-downloads" });
@@ -1563,6 +1821,7 @@ export function renderSessionRow(session) {
     session.tabTitle,
     session.description,
     session.transcriptText,
+    Array.isArray(session.tags) ? session.tags.join(" ") : "",
   ].filter(Boolean).join(" ").toLowerCase();
 
   const hasTranscript = !!(session.transcriptText || session._fsTxtPath);
@@ -1583,6 +1842,21 @@ export function renderSessionRow(session) {
     updateBulkActions();
   });
   row.appendChild(checkbox);
+
+  // Tag editor trigger — small icon in the top-right corner of the card,
+  // just left of the selection checkbox. Orphaned downloads (dl-/fs- ids)
+  // have no persisted session record, so tagging is only offered for real
+  // sessions.
+  if (typeof session.id === "string" && !session.id.startsWith("dl-") && !session.id.startsWith("fs-")) {
+    const tagBtn = document.createElement("button");
+    tagBtn.type = "button";
+    tagBtn.className = "recording-item-tag-btn";
+    tagBtn.dataset.action = "edit-tags";
+    tagBtn.title = "Edit tags";
+    tagBtn.setAttribute("aria-label", "Edit tags");
+    tagBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M2 2h5.6l5.4 5.4a1.5 1.5 0 0 1 0 2.1l-3.5 3.5a1.5 1.5 0 0 1-2.1 0L2 7.6V2zm2.4 2.4a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z"/></svg>`;
+    row.appendChild(tagBtn);
+  }
 
   const top = document.createElement("div");
   top.className = "recording-item-top";
@@ -1614,6 +1888,20 @@ export function renderSessionRow(session) {
   if (badges) {
     if (metaParts.length > 0) meta.appendChild(makeDot());
     meta.appendChild(badges);
+  }
+
+  // Render existing tags as small read-only chips on the card.
+  if (Array.isArray(session.tags) && session.tags.length > 0) {
+    if (metaParts.length > 0 || badges) meta.appendChild(makeDot());
+    const tagList = document.createElement("span");
+    tagList.className = "recording-item-tags";
+    for (const tag of session.tags) {
+      const chip = document.createElement("span");
+      chip.className = "recording-item-tag";
+      chip.textContent = tag;
+      tagList.appendChild(chip);
+    }
+    meta.appendChild(tagList);
   }
 
   top.appendChild(meta);
@@ -2025,6 +2313,11 @@ async function onRecordingsListClick(event) {
   if (!sessionId) return;
 
   const action = button.dataset.action;
+
+  if (action === "edit-tags") {
+    openTagEditor(button, sessionId);
+    return;
+  }
 
   if (action === "copy-transcript") {
     const session = await findSession(sessionId);
@@ -2623,12 +2916,27 @@ async function transcribeSessionImpl(session, button, row) {
   clearTranscriptPreview(row);
 
   let file;
-  try {
-    file = await readRecordingFile(handle, session.fileName);
-  } catch (error) {
-    statusEl.textContent = `Could not open file: ${error?.message || error}`;
-    restore();
-    return;
+  {
+    const MAX_ATTEMPTS = 5;
+    const RETRY_MS = 1000;
+    let lastError;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        file = await readRecordingFile(handle, session.fileName);
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < MAX_ATTEMPTS) {
+          setRowProgress(row, { label: `Waiting for file (${attempt}/${MAX_ATTEMPTS - 1})`, spinner: true });
+          await sleep(RETRY_MS);
+        }
+      }
+    }
+    if (!file) {
+      statusEl.textContent = `Could not open file: ${lastError?.message || lastError}`;
+      restore();
+      return;
+    }
   }
 
   setRowProgress(row, { label: "Inspecting audio" });

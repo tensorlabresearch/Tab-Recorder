@@ -67,6 +67,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "update-session-tags") {
+    updateSessionTags(message.sessionId, message.tags)
+      .then((session) => sendResponse({ ok: true, session }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
+
   if (message.type === "delete-session") {
     deleteSession(message.sessionId)
       .then(() => sendResponse({ ok: true }))
@@ -169,6 +176,26 @@ export async function updateSessionTranscript(sessionId, transcriptText, transcr
     transcriptText: text,
     transcriptWords: sanitizedWords
   };
+  const localStorage = globalThis.chrome?.storage?.local;
+  if (!localStorage) {
+    throw new Error("Storage API unavailable in service worker");
+  }
+  await localStorage.set({ [STORAGE_KEYS.SESSIONS]: sessions.slice(0, 300) });
+  return sessions[index];
+}
+
+export async function updateSessionTags(sessionId, tags) {
+  const id = String(sessionId || "").trim();
+  if (!id) throw new Error("Session ID is required");
+  const clean = Array.isArray(tags)
+    ? [...new Set(tags.map((t) => String(t || "").trim().toLowerCase()).filter(Boolean))].slice(0, 50)
+    : [];
+
+  const sessions = await getSessions();
+  const index = sessions.findIndex((item) => item?.id === id);
+  if (index < 0) throw new Error("Session not found");
+
+  sessions[index] = { ...sessions[index], tags: clean };
   const localStorage = globalThis.chrome?.storage?.local;
   if (!localStorage) {
     throw new Error("Storage API unavailable in service worker");
