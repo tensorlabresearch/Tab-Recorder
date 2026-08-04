@@ -7,11 +7,13 @@ import {
 } from "../extension/lib/filterAutocomplete.js";
 
 describe("FIELD_SUGGESTIONS", () => {
-  it("includes title, transcript, date, has", () => {
+  it("includes title, transcript, date, tags, tag, has", () => {
     const labels = FIELD_SUGGESTIONS.map((f) => f.label);
     expect(labels).toContain("title");
     expect(labels).toContain("transcript");
     expect(labels).toContain("date");
+    expect(labels).toContain("tags");
+    expect(labels).toContain("tag");
     expect(labels).toContain("has");
   });
 });
@@ -20,7 +22,7 @@ describe("getAutocompleteContext - field phase", () => {
   it("returns field suggestions at start of empty input", () => {
     const ctx = getAutocompleteContext("", 0);
     expect(ctx.phase).toBe("field");
-    expect(ctx.suggestions.length).toBe(5);
+    expect(ctx.suggestions.length).toBe(7);
     expect(ctx.replaceStart).toBe(0);
     expect(ctx.replaceEnd).toBe(0);
   });
@@ -35,19 +37,19 @@ describe("getAutocompleteContext - field phase", () => {
   it("returns field suggestions after && operator", () => {
     const ctx = getAutocompleteContext('title.contains("test") && ', 26);
     expect(ctx.phase).toBe("field");
-    expect(ctx.suggestions.length).toBe(5);
+    expect(ctx.suggestions.length).toBe(7);
   });
 
   it("returns field suggestions after || operator", () => {
     const ctx = getAutocompleteContext('title.contains("a") || ', 23);
     expect(ctx.phase).toBe("field");
-    expect(ctx.suggestions.length).toBe(5);
+    expect(ctx.suggestions.length).toBe(7);
   });
 
   it("returns field suggestions after opening paren", () => {
     const ctx = getAutocompleteContext("(", 1);
     expect(ctx.phase).toBe("field");
-    expect(ctx.suggestions.length).toBe(5);
+    expect(ctx.suggestions.length).toBe(7);
   });
 
   it("returns none for mid-value position", () => {
@@ -102,10 +104,11 @@ describe("getAutocompleteContext - has value phase", () => {
     const ctx = getAutocompleteContext('has("', 5);
     expect(ctx.phase).toBe("value");
     expect(ctx.field).toBe("has");
-    expect(ctx.suggestions.length).toBe(3);
+    expect(ctx.suggestions.length).toBe(4);
     expect(ctx.suggestions[0].label).toBe("transcript");
     expect(ctx.suggestions[1].label).toBe("mp3");
     expect(ctx.suggestions[2].label).toBe("summary");
+    expect(ctx.suggestions[3].label).toBe("tag");
   });
 
   it("filters value suggestions by typed prefix", () => {
@@ -113,6 +116,40 @@ describe("getAutocompleteContext - has value phase", () => {
     expect(ctx.phase).toBe("value");
     expect(ctx.suggestions.length).toBe(1);
     expect(ctx.suggestions[0].label).toBe("transcript");
+  });
+
+  it("filters has value suggestions to tag by typed prefix", () => {
+    const ctx = getAutocompleteContext('has("ta', 7);
+    expect(ctx.phase).toBe("value");
+    expect(ctx.suggestions.length).toBe(1);
+    expect(ctx.suggestions[0].label).toBe("tag");
+    expect(ctx.suggestions[0].insert).toBe('tag")');
+  });
+});
+
+describe("getAutocompleteContext - tags", () => {
+  it("returns operator suggestions after tags.", () => {
+    const ctx = getAutocompleteContext("tags.", 5);
+    expect(ctx.phase).toBe("operator");
+    expect(ctx.field).toBe("tags");
+    expect(ctx.suggestions.length).toBe(2);
+    expect(ctx.suggestions[0].label).toBe("contains");
+    expect(ctx.suggestions[1].label).toBe("matches");
+  });
+
+  it("filters tags operators by typed prefix", () => {
+    const ctx = getAutocompleteContext("tags.con", 8);
+    expect(ctx.phase).toBe("operator");
+    expect(ctx.suggestions.length).toBe(1);
+    expect(ctx.suggestions[0].label).toBe("contains");
+  });
+
+  it("suggests tag field by typed prefix", () => {
+    const ctx = getAutocompleteContext("tag", 3);
+    expect(ctx.phase).toBe("field");
+    const labels = ctx.suggestions.map((s) => s.label);
+    expect(labels).toContain("tag");
+    expect(labels).toContain("tags");
   });
 });
 
@@ -194,6 +231,11 @@ describe("OPERATOR_SUGGESTIONS", () => {
 
   it("has operators for has", () => {
     expect(OPERATOR_SUGGESTIONS.has).toBeDefined();
-    expect(OPERATOR_SUGGESTIONS.has.length).toBe(2);
+    expect(OPERATOR_SUGGESTIONS.has.length).toBe(3);
+  });
+
+  it("has operators for tags", () => {
+    expect(OPERATOR_SUGGESTIONS.tags).toBeDefined();
+    expect(OPERATOR_SUGGESTIONS.tags.length).toBe(2);
   });
 });

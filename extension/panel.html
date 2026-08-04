@@ -105,7 +105,7 @@
         </div>
         <div class="recordings-filter">
           <input id="recordings-filter" type="search" autocomplete="off"
-                 placeholder='Filter by text, or use CEL: title.contains("…"), title.matches("regex"), date.range("2026-01-01","2026-01-31"), has("transcript")' />
+                 placeholder='Filter by text, or use CEL: title.contains("…"), date.range("2026-01-01","2026-01-31"), tag("work"), has("transcript")' />
           <span id="recordings-filter-count" class="recordings-filter-count"></span>
           <button id="filter-help-btn" class="filter-help-btn" type="button" title="Filter syntax help" aria-label="Filter syntax help">?</button>
           <div id="filter-autocomplete" class="filter-autocomplete hidden"></div>
@@ -123,7 +123,9 @@
               <p><code>date.after("2026-01-01")</code> — recordings from after that date.</p>
               <p><code>date.before("2026-01-31")</code> — recordings from before that date.</p>
               <p><code>date.range("2026-01-01","2026-01-31")</code> — inclusive start, exclusive end.</p>
-              <p><code>has("transcript")</code> / <code>has("mp3")</code> — filter by artifact presence.</p>
+              <p><code>has("transcript")</code> / <code>has("mp3")</code> / <code>has("tag")</code> — filter by artifact presence.</p>
+              <p><code>tag("work","project-x")</code> — has any of the listed tags (case-insensitive).</p>
+              <p><code>tags.contains("text")</code> / <code>tags.matches("regex")</code> — match within tags.</p>
               <p>Combine with <code>&&</code> (AND), <code>||</code> (OR), and parentheses.</p>
               <p class="example">Example: <code>title.contains("standup") && date.range("2026-06-01","2026-06-30")</code></p>
             </div>

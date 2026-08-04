@@ -11,7 +11,9 @@ export const FIELD_SUGGESTIONS = [
   { label: "transcript", insert: "transcript.", detail: "Match on transcript text" },
   { label: "summary",    insert: "summary.",    detail: "Match on AI summary description" },
   { label: "date",       insert: "date.",       detail: "Filter by recording date" },
-  { label: "has",        insert: 'has("',       detail: "Filter by artifact presence (transcript, mp3, summary)" },
+  { label: "tags",       insert: "tags.",       detail: "Match on recording tags" },
+  { label: "tag",        insert: 'tag("',       detail: "Has any of the given tags (comma-separated)" },
+  { label: "has",        insert: 'has("',       detail: "Filter by artifact presence (transcript, mp3, summary, tag)" },
 ];
 
 export const OPERATOR_SUGGESTIONS = {
@@ -32,9 +34,14 @@ export const OPERATOR_SUGGESTIONS = {
     { label: "before", insert: 'before("', detail: "Recordings strictly before this date" },
     { label: "range",  insert: 'range("',  detail: "Date range (start, end)" },
   ],
+  tags: [
+    { label: "contains", insert: 'contains("', detail: "Case-insensitive substring match on tags" },
+    { label: "matches",  insert: 'matches("',  detail: "Case-insensitive regex match on tags" },
+  ],
   has: [
     { label: "transcript", insert: 'transcript")', detail: "Has a transcript" },
     { label: "mp3",        insert: 'mp3")',        detail: "Has an MP3" },
+    { label: "tag",        insert: 'tag")',        detail: "Has at least one tag" },
   ],
 };
 
@@ -42,6 +49,7 @@ export const HAS_VALUE_SUGGESTIONS = [
   { label: "transcript", insert: 'transcript")', detail: "Has a transcript" },
   { label: "mp3",        insert: 'mp3")',        detail: "Has an MP3" },
   { label: "summary",    insert: 'summary")',    detail: "Has a summary" },
+  { label: "tag",        insert: 'tag")',        detail: "Has at least one tag" },
 ];
 
 /**
@@ -76,7 +84,7 @@ export function getAutocompleteContext(text, cursorPos) {
     };
   }
 
-  const fieldMatch = before.match(/(title|transcript|summary|date|has)\s*\.\s*([a-zA-Z]*)$/);
+  const fieldMatch = before.match(/(title|transcript|summary|date|tags|has)\s*\.\s*([a-zA-Z]*)$/);
   if (fieldMatch) {
     const field = fieldMatch[1];
     const typed = fieldMatch[2];
