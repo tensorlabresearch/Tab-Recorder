@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab Recorder",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Free tab and mic audio recorder with local saving, local transcription, and browser AI summaries.",
   "minimum_chrome_version": "116",
   "permissions": [
