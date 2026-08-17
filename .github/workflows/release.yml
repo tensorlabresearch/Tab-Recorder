@@ -141,7 +141,7 @@ jobs:
           echo "✅ Built: $ZIP_NAME ($(du -h "$ZIP_NAME" | cut -f1))"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tab-recorder-extension
           path: tab-recorder-*.zip
