@@ -766,8 +766,8 @@ async function onStartRecording() {
     const finishedSession = currentSession;
     let saveOk = false;
     try {
-      const { downloadId } = await saveBlob(blob, finishedSession);
-      await persistSessionRecord(finishedSession, downloadId, mimeType);
+      const { downloadId, fileName } = await saveBlob(blob, finishedSession);
+      await persistSessionRecord(finishedSession, downloadId, mimeType, fileName);
       statusEl.textContent = `Saved: ${finishedSession.fileName}`;
       saveOk = true;
     } catch (error) {
@@ -1195,6 +1195,21 @@ function pickMimeType() {
 
 async function saveBlob(blob, session) {
   if (!blob || blob.size === 0) throw new Error("Empty recording");
+
+  // If the user has picked a recordings folder, write the webm directly into
+  // it via the File System Access API so the recording, MP3 and transcript all
+  // live in the same user-selected folder. Fall back to chrome.downloads
+  // (Downloads/Tab Recorder) when no folder has been granted.
+  const handle = await getRecordingsDirectoryHandle({ mode: "readwrite" }).catch(() => null);
+  if (handle) {
+    try {
+      const result = await writeRecordingArtifact(handle, session.fileName, blob, { extension: "webm" });
+      return { downloadId: null, fileName: result.fileName };
+    } catch (_) {
+      // Fall through to the downloads path below.
+    }
+  }
+
   const blobUrl = URL.createObjectURL(blob);
   try {
     const downloadId = await chrome.downloads.download({
@@ -1203,7 +1218,7 @@ async function saveBlob(blob, session) {
       saveAs: false
     });
     await waitForDownloadComplete(downloadId);
-    return { downloadId };
+    return { downloadId, fileName: `Tab Recorder/${session.fileName}` };
   } finally {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   }
@@ -1246,10 +1261,14 @@ function waitForDownloadComplete(downloadId, timeoutMs = 30000) {
   });
 }
 
-async function persistSessionRecord(session, downloadId, mimeType) {
+async function persistSessionRecord(session, downloadId, mimeType, savedFileName) {
   const endedAt = Date.now();
   const pausedDuringActive = pauseStartedAt != null ? endedAt - pauseStartedAt : 0;
   const durationMs = Math.max(0, endedAt - session.startedAt - totalPausedMs - pausedDuringActive);
+  // When the recording was written into the user-picked folder, savedFileName is
+  // the day-folder-relative path (no "Tab Recorder/" prefix); when it went through
+  // chrome.downloads it keeps the "Tab Recorder/" prefix. Persist whichever path
+  // actually matches the file on disk so MP3/transcription lookups resolve.
   const payload = {
     id: session.id,
     meetingLabel: session.meetingLabel,
@@ -1257,7 +1276,7 @@ async function persistSessionRecord(session, downloadId, mimeType) {
     startedAt: session.startedAt,
     endedAt,
     durationMs,
-    fileName: `Tab Recorder/${session.fileName}`,
+    fileName: savedFileName || `Tab Recorder/${session.fileName}`,
     downloadId: Number.isInteger(downloadId) ? downloadId : null,
     audioFormat: "webm",
     audioMimeType: mimeType
