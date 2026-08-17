@@ -19,7 +19,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@playwright/test": "^1.61.1",
     "@vitest/coverage-v8": "^3.0.0",
-    "eslint": "^9.30.0",
+    "eslint": "^10.8.1",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.1",
     "vitest": "^4.1.9"
