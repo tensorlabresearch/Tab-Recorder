@@ -1347,19 +1347,27 @@ let recordingsFilter = "";
 
 // Operations currently in flight (transcribe, MP3 convert). Tracked by the
 // session's fileName because that's stable even when a synthesized session
-// gets promoted to a stored one mid-operation.
+// gets promoted to a stored one mid-operation. The action-specific set lets
+// the UI mark only the button whose action is actually running.
 const inProgressFileNames = new Set();
+const inProgressSessionActions = new Set();
 const queuedSessionActions = new Set();
 let operationsInFlight = 0;
 let deferredReload = false;
 
-export function startOperation(fileName) {
-  if (fileName) inProgressFileNames.add(fileName);
+export function startOperation(fileName, action) {
+  if (fileName) {
+    inProgressFileNames.add(fileName);
+    if (action) inProgressSessionActions.add(`${fileName}:${action}`);
+  }
   operationsInFlight += 1;
 }
 
-export function endOperation(fileName) {
-  if (fileName) inProgressFileNames.delete(fileName);
+export function endOperation(fileName, action) {
+  if (fileName) {
+    inProgressFileNames.delete(fileName);
+    if (action) inProgressSessionActions.delete(`${fileName}:${action}`);
+  }
   operationsInFlight = Math.max(0, operationsInFlight - 1);
   if (operationsInFlight === 0 && deferredReload) {
     deferredReload = false;
@@ -1932,6 +1940,7 @@ export function renderSessionRow(session) {
 
   const fileNameInProgress = inProgressFileNames.has(session.fileName);
   const isQueued = (action) => queuedSessionActions.has(`${session.id}:${action}`);
+  const isInProgress = (action) => inProgressSessionActions.has(`${session.fileName}:${action}`);
   if (fileNameInProgress) row.classList.add("is-working");
 
   if (!hasTranscript) {
@@ -1939,7 +1948,7 @@ export function renderSessionRow(session) {
     transcribeBtn.type = "button";
     transcribeBtn.className = "row-action";
     transcribeBtn.dataset.action = "transcribe";
-    const transcribing = fileNameInProgress || isQueued("transcribe");
+    const transcribing = isInProgress("transcribe") || isQueued("transcribe");
     transcribeBtn.textContent = transcribing ? "Working..." : "Transcribe";
     if (transcribing) {
       transcribeBtn.disabled = true;
@@ -1953,7 +1962,7 @@ export function renderSessionRow(session) {
     mp3Btn.type = "button";
     mp3Btn.className = "row-action";
     mp3Btn.dataset.action = "convert-mp3";
-    const converting = fileNameInProgress || isQueued("convert-mp3");
+    const converting = isInProgress("convert-mp3") || isQueued("convert-mp3");
     mp3Btn.textContent = converting ? "Working..." : "Convert to MP3";
     if (converting) {
       mp3Btn.disabled = true;
@@ -1967,7 +1976,7 @@ export function renderSessionRow(session) {
     summarizeBtn.type = "button";
     summarizeBtn.className = "row-action";
     summarizeBtn.dataset.action = "summarize";
-    const summarizing = fileNameInProgress || isQueued("summarize");
+    const summarizing = isInProgress("summarize") || isQueued("summarize");
     summarizeBtn.textContent = summarizing ? "Working..." : "Summarize";
     if (summarizing) {
       summarizeBtn.disabled = true;
@@ -1981,7 +1990,7 @@ export function renderSessionRow(session) {
     diarizeBtn.type = "button";
     diarizeBtn.className = "row-action";
     diarizeBtn.dataset.action = "diarize";
-    const diarizing = fileNameInProgress || isQueued("diarize");
+    const diarizing = isInProgress("diarize") || isQueued("diarize");
     diarizeBtn.textContent = diarizing ? "Working..." : "Diarize";
     if (diarizing) {
       diarizeBtn.disabled = true;
@@ -2498,7 +2507,7 @@ async function summarizeSession(session, button, row) {
   }
 
   row = row || button?.closest(".recording-item") || null;
-  startOperation(session.fileName);
+  startOperation(session.fileName, "summarize");
   if (row) {
     row.classList.add("is-working");
     setRowProgress(row, { label: "Summarizing with Gemini Nano...", spinner: true });
@@ -2536,7 +2545,7 @@ async function summarizeSession(session, button, row) {
       button.textContent = session._fsSummaryPath ? "Re-summarize" : "Summarize";
     }
   } finally {
-    endOperation(session.fileName);
+    endOperation(session.fileName, "summarize");
     await loadAndRenderSessions();
   }
 }
@@ -2559,7 +2568,7 @@ async function diarizeSession(session, button, row) {
 
   row = row || button?.closest(".recording-item") || null;
   const originalLabel = button?.textContent;
-  startOperation(session.fileName);
+  startOperation(session.fileName, "diarize");
   if (row) {
     row.classList.add("is-working");
     setRowProgress(row, { label: "Loading audio for diarization", spinner: true });
@@ -2666,7 +2675,7 @@ async function diarizeSession(session, button, row) {
     }
   } finally {
     if (client) client.terminate();
-    endOperation(session.fileName);
+    endOperation(session.fileName, "diarize");
     await loadAndRenderSessions();
   }
 }
@@ -2727,11 +2736,11 @@ async function ensureRecordingsHandle({ writable = false } = {}) {
 }
 
 async function convertSessionToMp3(session, button, row) {
-  startOperation(session?.fileName);
+  startOperation(session?.fileName, "convert-mp3");
   try {
     await convertSessionToMp3Impl(session, button, row);
   } finally {
-    endOperation(session?.fileName);
+    endOperation(session?.fileName, "convert-mp3");
     await loadAndRenderSessions();
   }
 }
@@ -2899,11 +2908,11 @@ function encodeMp3InWorker(left, right, sampleRate, onProgress) {
 }
 
 async function transcribeSession(session, button, row) {
-  startOperation(session?.fileName);
+  startOperation(session?.fileName, "transcribe");
   try {
     await transcribeSessionImpl(session, button, row);
   } finally {
-    endOperation(session?.fileName);
+    endOperation(session?.fileName, "transcribe");
     await loadAndRenderSessions();
   }
 }

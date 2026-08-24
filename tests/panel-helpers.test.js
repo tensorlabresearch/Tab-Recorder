@@ -523,15 +523,32 @@ describe("renderSessionRow", () => {
     expect(row.dataset.searchBlob).toContain("discussed quarterly results");
   });
 
-  it("disables buttons when operation is in progress", () => {
+  it("marks the row working and disables only the in-progress action's button", () => {
     const session = { id: "s1", meetingLabel: "Test", startedAt: Date.now(), fileName: "in-progress.webm" };
-    startOperation("in-progress.webm");
+    startOperation("in-progress.webm", "transcribe");
     const row = renderSessionRow(session);
     const transcribeBtn = row.querySelector('[data-action="transcribe"]');
     expect(transcribeBtn.disabled).toBe(true);
     expect(transcribeBtn.textContent).toBe("Working...");
+    // Other action buttons on the same row must remain clickable while a
+    // different action is running.
+    const mp3Btn = row.querySelector('[data-action="convert-mp3"]');
+    expect(mp3Btn.disabled).toBe(false);
+    expect(mp3Btn.textContent).toBe("Convert to MP3");
     expect(row.classList.contains("is-working")).toBe(true);
-    endOperation("in-progress.webm");
+    endOperation("in-progress.webm", "transcribe");
+  });
+
+  it("keeps buttons enabled for an actionless in-progress operation", () => {
+    // startOperation without an action (legacy callers) still marks the row
+    // as working but does not disable any specific button.
+    const session = { id: "s1", meetingLabel: "Test", startedAt: Date.now(), fileName: "legacy.webm" };
+    startOperation("legacy.webm");
+    const row = renderSessionRow(session);
+    const transcribeBtn = row.querySelector('[data-action="transcribe"]');
+    expect(transcribeBtn.disabled).toBe(false);
+    expect(row.classList.contains("is-working")).toBe(true);
+    endOperation("legacy.webm");
   });
 });
 
