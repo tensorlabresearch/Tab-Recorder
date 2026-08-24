@@ -162,10 +162,45 @@ jobs:
             - All bundled dependencies included (no remote scripts).
 
             ### Submission Checklist
-            - [ ] Upload ZIP to [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)
             - [ ] Add screenshots and promotional images
             - [ ] Complete privacy practices disclosure
             - [ ] Set category (e.g., Productivity)
             - [ ] Set regions/visibility
+
+            The ZIP is submitted to the Chrome Web Store for review automatically
+            by the step below (requires the BPP_KEYS repo secret).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Submit the built zip to the Chrome Web Store for review (tag pushes only).
+      # Requires one repo secret, BPP_KEYS, containing a JSON object:
+      #   {"chrome": {"extId": "<32-char extension id>",
+      #               "clientId": "<oauth client id>",
+      #               "clientSecret": "<oauth client secret>",
+      #               "refreshToken": "<oauth refresh token>"}}
+      # See https://github.com/PlasmoHQ/bpp and
+      # https://github.com/PlasmoHQ/chrome-webstore-api/blob/main/token.md
+      # Skipped gracefully until the secret exists; the GitHub Release above
+      # is still created because it runs first.
+      - name: Check BPP_KEYS secret
+        id: bpp-keys
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          BPP_KEYS: ${{ secrets.BPP_KEYS }}
+        run: |
+          if [ -n "$BPP_KEYS" ]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "set=false" >> "$GITHUB_OUTPUT"
+            echo "BPP_KEYS secret not configured — skipping Chrome Web Store submission."
+          fi
+
+      - name: Submit to Chrome Web Store
+        if: startsWith(github.ref, 'refs/tags/v') && steps.bpp-keys.outputs.set == 'true'
+        uses: PlasmoHQ/bpp@v2
+        env:
+          VERSION: ${{ github.ref_name }}
+        with:
+          keys: ${{ secrets.BPP_KEYS }}
+          chrome-file: tab-recorder-${{ env.VERSION }}.zip

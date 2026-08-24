@@ -2,7 +2,13 @@ name: Auto Release
 
 # On every push to main, parse commits since the last tag, decide whether to
 # bump patch/minor/major, update package.json + manifest.json, commit and
-# tag, build the extension zip, and publish a GitHub Release.
+# tag, build the extension zip, publish a GitHub Release, and submit the zip
+# to the Chrome Web Store for review (via PlasmoHQ/bpp; needs the BPP_KEYS
+# repo secret).
+# NOTE: the tag push uses GITHUB_TOKEN so it does NOT re-trigger release.yml;
+# CWS submission for auto-bumped releases happens in this workflow.
+# Manual tag pushes (git push --tags) trigger release.yml instead, which
+# performs the same submission.
 #
 # This workflow triggers automatically AFTER the CI workflow completes
 # successfully on the main branch. It will not run on pull requests or
@@ -145,3 +151,30 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           files: tab-recorder-v${{ steps.version.outputs.version }}.zip
           generate_release_notes: true
+
+      # NOTE: the tag push above uses GITHUB_TOKEN, which does NOT trigger
+      # release.yml (GitHub blocks token-triggered workflow runs). So CWS
+      # submission for auto-bumped releases must happen here. Manual tag
+      # pushes (`git push --tags`) trigger release.yml, which also submits.
+      # Both paths guard on the BPP_KEYS secret to avoid failures before
+      # it's configured.
+      - name: Check BPP_KEYS secret
+        id: bpp-keys
+        if: steps.skip.outputs.skip != 'true'
+        shell: bash
+        env:
+          BPP_KEYS: ${{ secrets.BPP_KEYS }}
+        run: |
+          if [ -n "$BPP_KEYS" ]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "set=false" >> "$GITHUB_OUTPUT"
+            echo "BPP_KEYS secret not configured — skipping Chrome Web Store submission."
+          fi
+
+      - name: Submit to Chrome Web Store
+        if: steps.skip.outputs.skip != 'true' && steps.bpp-keys.outputs.set == 'true'
+        uses: PlasmoHQ/bpp@v2
+        with:
+          keys: ${{ secrets.BPP_KEYS }}
+          chrome-file: tab-recorder-v${{ steps.version.outputs.version }}.zip

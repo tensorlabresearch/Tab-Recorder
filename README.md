@@ -185,6 +185,40 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
 breaking changes with `feat!:` or a `BREAKING CHANGE:` footer to force a major
 bump.
 
+### Chrome Web Store submission
+
+Both release paths (`auto-release.yml` on push to `main`, and `release.yml`
+on a pushed `v*` tag or manual dispatch) also submit the built zip to the
+Chrome Web Store using the [`PlasmoHQ/bpp`](https://github.com/PlasmoHQ/bpp)
+GitHub Action. The submission step is skipped gracefully if the `BPP_KEYS`
+repository secret is not set, so the GitHub Release still succeeds.
+
+`BPP_KEYS` is a single JSON secret (schema:
+[`keys.schema.json`](https://github.com/PlasmoHQ/bpp/blob/main/keys.schema.json)):
+
+```json
+{"chrome": {"extId": "...", "clientId": "...",
+           "clientSecret": "...", "refreshToken": "..."}}
+```
+
+It is already configured in this repo's Actions secrets (set 2026-08-23 by
+`kai5263499`). To regenerate or rotate it:
+
+- `extId` — the extension's Chrome Web Store item ID: `kikhkpkhdnbdiahifblhgkipdgklndnf`
+  (from the developer dashboard item URL).
+- `clientId` / `clientSecret` — from an OAuth client in the Google Cloud
+  project (`client_secret_*.apps.googleusercontent.com.json` downloaded from
+  the console).
+- `refreshToken` — run `node tools/get-cws-refresh-token.mjs` (starts a
+  localhost listener, opens the consent screen with the `chromewebstore`
+  scope, exchanges the code, and prints a ready-to-paste `BPP_KEYS` JSON).
+
+Set the secret with `gh secret set BPP_KEYS` (requires an account with repo
+admin access; `wwidner-ch` only has pull access, use `kai5263499`). Note:
+tags pushed by `auto-release.yml` use `GITHUB_TOKEN`, which does not trigger
+other workflows — that is why the CWS submission step lives in both workflow
+files rather than relying on `release.yml` firing from the auto-pushed tag.
+
 ## Repo layout
 
 ```
