@@ -203,4 +203,4 @@ jobs:
           VERSION: ${{ github.ref_name }}
         with:
           keys: ${{ secrets.BPP_KEYS }}
-          chrome-file: tab-recorder-${{ env.VERSION }}.zip
+          artifact: tab-recorder-${{ env.VERSION }}.zip
