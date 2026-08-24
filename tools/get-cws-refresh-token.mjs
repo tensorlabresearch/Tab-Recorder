@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { exec } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { URLSearchParams } from 'node:url';
 
 const PORT = 8085;
 const REDIRECT_URI = `http://localhost:${PORT}`;
