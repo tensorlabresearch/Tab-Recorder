@@ -174,7 +174,7 @@ jobs:
 
       - name: Submit to Chrome Web Store
         if: steps.skip.outputs.skip != 'true' && steps.bpp-keys.outputs.set == 'true'
-        uses: PlasmoHQ/bpp@v2
+        uses: PlasmoHQ/bpp@v3
         with:
           keys: ${{ secrets.BPP_KEYS }}
           artifact: tab-recorder-v${{ steps.version.outputs.version }}.zip

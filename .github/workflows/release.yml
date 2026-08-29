@@ -198,7 +198,7 @@ jobs:
 
       - name: Submit to Chrome Web Store
         if: startsWith(github.ref, 'refs/tags/v') && steps.bpp-keys.outputs.set == 'true'
-        uses: PlasmoHQ/bpp@v2
+        uses: PlasmoHQ/bpp@v3
         env:
           VERSION: ${{ github.ref_name }}
         with:
