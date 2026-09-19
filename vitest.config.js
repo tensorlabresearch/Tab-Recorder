@@ -19,6 +19,8 @@ export default defineConfig({
         'extension/lib/summaryFile.js',
         'extension/lib/mp3Encoding.js',
         'extension/lib/whisperModel.js',
+        'extension/lib/transcriptionHealth.js',
+        'extension/lib/whisperClient.js',
         'extension/lib/utteranceSegmenter.js',
         'extension/lib/embeddingCluster.js',
         'extension/lib/diarizedTranscript.js',
