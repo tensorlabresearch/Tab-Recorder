@@ -1,10 +1,12 @@
 import {
   WHISPER_MODELS,
   DEFAULT_WHISPER_MODEL_ID,
-  getSelectedModelId,
+  resolveModelId,
   setSelectedModelId,
   isModelCached,
   findModel,
+  modelDtypes,
+  setModelDownloadConsent,
   formatModelSize,
   getAutoTranscribePreference,
   setAutoTranscribePreference
@@ -54,7 +56,9 @@ const speakerDetectionControls = document.getElementById("speaker-detection-cont
 init().catch((error) => showToast(`Error: ${error?.message || error}`, "error"));
 
 async function init() {
-  buildSelectOptions(modelSelect, WHISPER_MODELS, await getSelectedModelId(), DEFAULT_WHISPER_MODEL_ID);
+  // Show what will actually run, which is the already-cached model when the
+  // user has never made an explicit choice.
+  buildSelectOptions(modelSelect, WHISPER_MODELS, await resolveModelId(), DEFAULT_WHISPER_MODEL_ID);
   buildSelectOptions(
     speakerModelSelect,
     SPEAKER_EMBED_MODELS,
@@ -137,7 +141,11 @@ async function init() {
     }
   });
 
-  downloadButton.addEventListener("click", () => runWarmup(whisperWarmupConfig()));
+  downloadButton.addEventListener("click", () => {
+    // An explicit download here answers the panel's one-time consent prompt.
+    setModelDownloadConsent(modelSelect.value, true).catch(() => {});
+    runWarmup(whisperWarmupConfig());
+  });
   clearCacheButton.addEventListener("click", () => clearTransformersCache({
     refresh: () => Promise.all([refreshWhisperCacheState(), refreshSpeakerCacheState()])
   }));
@@ -307,6 +315,7 @@ function whisperWarmupConfig() {
     label: "Whisper",
     workerPath: "lib/whisperWorker.js",
     getModelId: () => modelSelect.value,
+    getDtypes: (id) => modelDtypes(id),
     engineStateEl,
     progressWrap,
     progressFill,
@@ -384,7 +393,14 @@ async function runWarmup(cfg) {
     }
     if (data.type === "worker-ready") {
       setProgress(cfg, 0, "Worker ready, sending warmup...");
-      worker.postMessage({ type: "warmup", jobId, modelId });
+      // Send the same dtype ladder the panel uses, so warming up caches
+      // exactly the files a real transcription will ask for.
+      worker.postMessage({
+        type: "warmup",
+        jobId,
+        modelId,
+        dtypes: cfg.getDtypes ? cfg.getDtypes(modelId) : undefined
+      });
       return;
     }
     if (data.type === "worker-import-error") {

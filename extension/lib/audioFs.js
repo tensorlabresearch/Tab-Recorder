@@ -71,6 +71,26 @@ export async function getRecordingsDirectoryHandle({ requireFresh = false, mode 
   return null;
 }
 
+/**
+ * Report the stored folder handle and its permission state *without* prompting.
+ * `getRecordingsDirectoryHandle` calls requestPermission, which needs a user
+ * gesture and throws when called from a background flow, so health checks must
+ * use this instead.
+ *
+ * @returns {Promise<{handle: FileSystemDirectoryHandle|null, state: "granted"|"prompt"|"denied"|"none"}>}
+ */
+export async function peekRecordingsDirectory(mode = "read") {
+  const handle = cachedHandle || (await readStoredHandle().catch(() => null));
+  if (!handle) return { handle: null, state: "none" };
+  try {
+    const permission = await handle.queryPermission({ mode });
+    if (permission === "granted" || permission === "denied") return { handle, state: permission };
+    return { handle, state: "prompt" };
+  } catch (_) {
+    return { handle, state: "prompt" };
+  }
+}
+
 export async function ensureWritable(handle) {
   return verifyHandlePermission(handle, "readwrite");
 }

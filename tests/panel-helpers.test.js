@@ -14,6 +14,9 @@ import {
   formatWorkerErrorEvent,
   formatTranscriptionChunkLabel,
   formatTranscriptionEngineLabel,
+  isRecoverableWhisperError,
+  whisperChunkBudgetMs,
+  isAbortError,
   isWebmRecording,
   renderSessionRow,
   makeBadge,
@@ -695,5 +698,55 @@ describe("setRowProgress", () => {
   it("does nothing when progress element is missing", () => {
     const row = document.createElement("div");
     expect(() => setRowProgress(row, { label: "test" })).not.toThrow();
+  });
+});
+
+describe("isRecoverableWhisperError", () => {
+  it("treats a stalled worker as recoverable", () => {
+    const error = new Error("Whisper stopped responding for 3m.");
+    error.code = "whisper-stalled";
+    expect(isRecoverableWhisperError(error)).toBe(true);
+  });
+
+  it("treats a crashed worker as recoverable", () => {
+    const error = new Error("Worker error");
+    error.code = "whisper-worker-error";
+    expect(isRecoverableWhisperError(error)).toBe(true);
+  });
+
+  it("does not retry ordinary transcription errors", () => {
+    expect(isRecoverableWhisperError(new Error("Transcription failed"))).toBe(false);
+    expect(isRecoverableWhisperError(null)).toBe(false);
+  });
+
+  it("does not retry a cancellation", () => {
+    const error = new Error("Cancelled.");
+    error.name = "AbortError";
+    expect(isRecoverableWhisperError(error)).toBe(false);
+  });
+});
+
+describe("isAbortError", () => {
+  it("recognizes an AbortError", () => {
+    const error = new Error("Cancelled.");
+    error.name = "AbortError";
+    expect(isAbortError(error)).toBe(true);
+  });
+
+  it("rejects other errors and nullish values", () => {
+    expect(isAbortError(new Error("boom"))).toBe(false);
+    expect(isAbortError(undefined)).toBe(false);
+  });
+});
+
+describe("whisperChunkBudgetMs", () => {
+  it("scales with the chunk's audio length", () => {
+    expect(whisperChunkBudgetMs(10 * 60 * 1000)).toBe(100 * 60 * 1000);
+  });
+
+  it("never drops below the 20 minute floor", () => {
+    expect(whisperChunkBudgetMs(30 * 1000)).toBe(20 * 60 * 1000);
+    expect(whisperChunkBudgetMs(0)).toBe(20 * 60 * 1000);
+    expect(whisperChunkBudgetMs(undefined)).toBe(20 * 60 * 1000);
   });
 });

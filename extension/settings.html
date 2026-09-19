@@ -58,7 +58,8 @@
 
         <p class="help-text">
           The model is downloaded from HuggingFace once and cached by the
-          browser. Subsequent transcriptions reuse the cache.
+          browser. Subsequent transcriptions reuse the cache. Downloading it
+          here is optional &mdash; the first transcription fetches it on its own.
         </p>
 
         <label class="toggle">
@@ -66,8 +67,10 @@
           <span>Auto-transcribe new recordings</span>
         </label>
         <p class="help-text">
-          When enabled, transcription kicks off automatically as soon as a
-          recording is stopped. Requires the model to be downloaded first.
+          On by default: transcription starts as soon as a recording is stopped.
+          The first time it needs the model, the panel asks once before
+          downloading it. If a recording is interrupted, it resumes the next
+          time you open the panel.
         </p>
       </section>
 

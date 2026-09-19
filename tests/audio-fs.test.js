@@ -117,6 +117,69 @@ describe("getRecordingsDirectoryHandle / pickRecordingsDirectory / forgetRecordi
     delete globalThis.window;
   });
 
+  it("peekRecordingsDirectory reports 'none' before a folder is picked", async () => {
+    const result = await mod.peekRecordingsDirectory();
+    expect(result).toEqual({ handle: null, state: "none" });
+  });
+
+  it("peekRecordingsDirectory reports the stored handle's permission state", async () => {
+    const fakeHandle = makeFakeRoot("Tab Recorder");
+    globalThis.window = {
+      ...(globalThis.window || {}),
+      showDirectoryPicker: async () => fakeHandle
+    };
+    await mod.pickRecordingsDirectory();
+
+    expect(await mod.peekRecordingsDirectory()).toEqual({
+      handle: fakeHandle,
+      state: "granted"
+    });
+
+    fakeHandle.permissionState = "prompt";
+    expect((await mod.peekRecordingsDirectory()).state).toBe("prompt");
+
+    fakeHandle.permissionState = "denied";
+    expect((await mod.peekRecordingsDirectory()).state).toBe("denied");
+
+    delete globalThis.window;
+  });
+
+  it("peekRecordingsDirectory never prompts", async () => {
+    const fakeHandle = makeFakeRoot("Tab Recorder");
+    let requested = 0;
+    fakeHandle.requestPermission = async () => {
+      requested += 1;
+      return "granted";
+    };
+    fakeHandle.permissionState = "prompt";
+    globalThis.window = {
+      ...(globalThis.window || {}),
+      showDirectoryPicker: async () => fakeHandle
+    };
+    await mod.pickRecordingsDirectory();
+
+    await mod.peekRecordingsDirectory("readwrite");
+    expect(requested).toBe(0);
+
+    delete globalThis.window;
+  });
+
+  it("peekRecordingsDirectory treats a throwing queryPermission as 'prompt'", async () => {
+    const fakeHandle = makeFakeRoot("Tab Recorder");
+    globalThis.window = {
+      ...(globalThis.window || {}),
+      showDirectoryPicker: async () => fakeHandle
+    };
+    await mod.pickRecordingsDirectory();
+    fakeHandle.queryPermission = async () => {
+      throw new Error("detached handle");
+    };
+
+    expect((await mod.peekRecordingsDirectory()).state).toBe("prompt");
+
+    delete globalThis.window;
+  });
+
   it("pickRecordingsDirectory throws when the API isn't available", async () => {
     globalThis.window = {}; // no showDirectoryPicker
     await expect(mod.pickRecordingsDirectory()).rejects.toThrow(

@@ -7,13 +7,28 @@ import {
   getDurationCache,
   clearRuntimeDurationCache,
   ensureWritable,
+  peekRecordingsDirectory,
   enumerateRecordings,
   writeRecordingArtifact,
   writeRecordingMeta,
   removeRecordingArtifact,
   readArtifactText
 } from "./lib/audioFs.js";
-import { getSelectedModelId, getAutoTranscribePreference } from "./lib/whisperModel.js";
+import {
+  DEFAULT_WHISPER_MODEL_ID,
+  resolveModelId,
+  modelDtypes,
+  getAutoTranscribePreference,
+  getModelDownloadConsent,
+  setModelDownloadConsent,
+  isModelCached,
+  findModel,
+  formatModelSize
+} from "./lib/whisperModel.js";
+import {
+  buildTranscriptionHealthReport,
+  nextAutoTranscribeAction
+} from "./lib/transcriptionHealth.js";
 import {
   getSelectedSpeakerEmbedModelId,
   getAutoDiarizePreference,
@@ -84,6 +99,11 @@ const deleteSelectedBtn = document.getElementById("delete-selected-btn");
 const bulkActionsEl = document.getElementById("bulk-actions");
 const folderNameEl = document.getElementById("folder-name");
 const pickFolderButton = document.getElementById("pick-folder-btn");
+const attentionEl = document.getElementById("attention");
+const attentionMessageEl = document.getElementById("attention-message");
+const attentionActionEl = document.getElementById("attention-action");
+const attentionSecondaryEl = document.getElementById("attention-secondary");
+const attentionDismissEl = document.getElementById("attention-dismiss");
 
 const MIC_DEVICE_ID_KEY = "selectedMicDeviceId";
 const NO_MIC_VALUE = "__none__";
@@ -418,6 +438,8 @@ async function init() {
 
   updateFolderStatus().catch(() => {});
 
+  attentionDismissEl?.addEventListener("click", () => clearAttention());
+
   recordingsListEl?.addEventListener("click", onRecordingsListClick);
 
   // Clicking anywhere outside an open tag editor closes it.
@@ -447,7 +469,13 @@ async function init() {
   initJobQueuePanel();
 
   loadAndRenderSessions()
-    .then(() => enrichDurationsInBackground())
+    .then(() => {
+      // Recordings whose transcription never finished (panel closed mid-job,
+      // folder access lapsed, offline) get picked back up here rather than
+      // waiting for the user to notice a missing transcript.
+      resumePendingTranscriptions().catch(() => {});
+      return enrichDurationsInBackground();
+    })
     .catch(() => {});
 
   window.addEventListener("beforeunload", () => {
@@ -534,12 +562,13 @@ function initJobQueuePanel() {
       label.textContent = job.label;
       row.appendChild(label);
 
-      if (job.status === "queued") {
+      if (job.status === "queued" || job.status === "running") {
         const cancelBtnEl = document.createElement("button");
         cancelBtnEl.className = "job-item-cancel";
         cancelBtnEl.type = "button";
-        cancelBtnEl.title = "Cancel";
+        cancelBtnEl.title = job.status === "running" ? "Stop" : "Cancel";
         cancelBtnEl.textContent = "\u00d7";
+        cancelBtnEl.disabled = !!job.cancelRequested;
         cancelBtnEl.addEventListener("click", () => cancelJob(job.id));
         row.appendChild(cancelBtnEl);
       }
@@ -779,8 +808,7 @@ async function onStartRecording() {
     await loadAndRenderSessions().catch(() => {});
 
     if (saveOk && finishedSession) {
-      const auto = await getAutoTranscribePreference().catch(() => false);
-      if (auto) triggerAutoTranscribe(finishedSession.id);
+      maybeAutoTranscribe(finishedSession.id).catch(() => {});
     }
   };
   mediaRecorder.onerror = (event) => {
@@ -2314,14 +2342,14 @@ function freshSession(sessionId) {
 const FAILURE_RE = /fail|error|not granted|not available|no transcript|could not|denied|skipped|already running/i;
 
 function makeJobRunner(sessionId, action, opFn) {
-  return async () => {
+  return async ({ signal } = {}) => {
     const s = freshSession(sessionId);
     if (!s) throw new Error("Session not found");
     const row = findSessionRow(sessionId);
     const button = row?.querySelector(`button[data-action="${action}"]`) || null;
     statusEl.textContent = "";
     try {
-      await opFn(s, button, row);
+      await opFn(s, button, row, { signal });
       const newStatus = statusEl.textContent.trim();
       if (newStatus && FAILURE_RE.test(newStatus)) {
         throw new Error(newStatus);
@@ -2420,17 +2448,12 @@ async function onRecordingsListClick(event) {
       statusEl.textContent = "Recording not found.";
       return;
     }
-    const actionKey = `${sessionId}:transcribe`;
-    if (queuedSessionActions.has(actionKey)) return;
-    queuedSessionActions.add(actionKey);
-    loadAndRenderSessions().catch(() => {});
-    enqueueJob({
-      type: "transcribe",
-      label: "Transcribe",
-      sessionId: session.id,
-      sessionLabel: session.meetingLabel || session.tabTitle || "Untitled",
-      run: makeJobRunner(sessionId, "transcribe", (s, btn, row) => transcribeSession(s, btn, row)),
-    });
+    clearAttention();
+    // Clicking Transcribe is explicit consent to fetch the model if needed.
+    resolveModelId()
+      .then((id) => setModelDownloadConsent(id, true))
+      .catch(() => {});
+    enqueueTranscribeJob(session);
     return;
   }
 
@@ -2684,17 +2707,284 @@ async function findSession(sessionId) {
   return cachedMergedSessions.find((s) => s?.id === sessionId) || null;
 }
 
-function triggerAutoTranscribe(sessionId) {
-  if (!sessionId || !recordingsListEl) return;
-  // The list re-renders on every save-session; the row should exist by now.
-  const row = recordingsListEl.querySelector(
-    `.recording-item[data-session-id="${CSS.escape(String(sessionId))}"]`
+// ---------------------------------------------------------------------------
+// Auto-transcription: check, self-heal, and only then ask the user
+// ---------------------------------------------------------------------------
+
+const PENDING_TRANSCRIBE_KEY = "pendingTranscriptions";
+let pendingOnlineRetry = false;
+
+function bindAttentionButton(button, label, handler) {
+  if (!button) return;
+  button.onclick = null;
+  if (!label || typeof handler !== "function") {
+    button.classList.add("hidden");
+    return;
+  }
+  button.textContent = label;
+  button.disabled = false;
+  button.classList.remove("hidden");
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      await handler();
+    } catch (error) {
+      if (attentionMessageEl) {
+        attentionMessageEl.textContent = `That did not work: ${error?.message || error}`;
+      }
+      button.disabled = false;
+    }
+  };
+}
+
+function showAttention({ message, actionLabel, onAction, secondaryLabel, onSecondary } = {}) {
+  if (!attentionEl || !attentionMessageEl) return;
+  attentionMessageEl.textContent = String(message || "");
+  attentionEl.classList.remove("hidden");
+  bindAttentionButton(attentionActionEl, actionLabel, onAction);
+  bindAttentionButton(attentionSecondaryEl, secondaryLabel, onSecondary);
+}
+
+function clearAttention() {
+  if (!attentionEl) return;
+  attentionEl.classList.add("hidden");
+  if (attentionActionEl) attentionActionEl.onclick = null;
+  if (attentionSecondaryEl) attentionSecondaryEl.onclick = null;
+}
+
+async function readPendingTranscriptions() {
+  try {
+    const stored = await chrome.storage.local.get(PENDING_TRANSCRIBE_KEY);
+    const value = stored?.[PENDING_TRANSCRIBE_KEY];
+    return value && typeof value === "object" ? value : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function writePendingTranscriptions(map) {
+  try {
+    await chrome.storage.local.set({ [PENDING_TRANSCRIBE_KEY]: map });
+  } catch (_) {}
+}
+
+/**
+ * Remember that a recording still owes us a transcript. The side panel is a
+ * page: closing it kills any running whisper worker, so without this marker a
+ * transcription interrupted that way would just never happen.
+ */
+async function markTranscriptionPending(sessionId, { countAttempt = false } = {}) {
+  if (!sessionId) return;
+  const map = await readPendingTranscriptions();
+  const entry = map[sessionId] || { attempts: 0 };
+  if (countAttempt) entry.attempts = (Number(entry.attempts) || 0) + 1;
+  entry.updatedAt = Date.now();
+  map[sessionId] = entry;
+  await writePendingTranscriptions(map);
+}
+
+async function clearTranscriptionPending(sessionId) {
+  if (!sessionId) return;
+  const map = await readPendingTranscriptions();
+  if (!(sessionId in map)) return;
+  delete map[sessionId];
+  await writePendingTranscriptions(map);
+}
+
+/** Gather the live environment and turn it into a health report. */
+async function checkTranscriptionHealth() {
+  const modelId = await resolveModelId().catch(() => null);
+  const [folder, modelCached, modelConsent] = await Promise.all([
+    peekRecordingsDirectory("read").catch(() => ({ state: "none" })),
+    isModelCached(modelId).catch(() => false),
+    getModelDownloadConsent(modelId).catch(() => "unset")
+  ]);
+  const model = findModel(modelId);
+  const report = buildTranscriptionHealthReport({
+    fileSystemAccessSupported: typeof window !== "undefined" && "showDirectoryPicker" in window,
+    isBrave: typeof navigator?.brave?.isBrave === "function",
+    folderPermission: folder.state,
+    modelCached,
+    online: navigator.onLine !== false,
+    modelConsent,
+    modelSizeLabel: model ? formatModelSize(model.approxBytes) : ""
+  });
+  return { ...report, modelId };
+}
+
+/** Apply the one fix a blocker allows, using the click that called us. */
+async function repairTranscriptionBlocker(blocker) {
+  if (blocker.code === "folder-not-picked") {
+    const handle = await pickRecordingsDirectory();
+    await updateFolderStatus(handle).catch(() => {});
+    enrichDurationsInBackground().catch(() => {});
+    await loadAndRenderSessions();
+    return;
+  }
+  if (blocker.code === "folder-permission-lost") {
+    const { handle } = await peekRecordingsDirectory("read");
+    // requestPermission needs the user gesture we are inside of right now.
+    const ok = handle ? await ensureWritable(handle) : false;
+    if (!ok) {
+      // The handle is beyond repair (folder moved or access revoked): fall
+      // back to picking it again rather than dead-ending.
+      const picked = await pickRecordingsDirectory();
+      await updateFolderStatus(picked).catch(() => {});
+    }
+    await loadAndRenderSessions();
+    return;
+  }
+  throw new Error("This one needs to be fixed in the browser, not here.");
+}
+
+function enqueueTranscribeJob(session) {
+  if (!session?.id) return false;
+  const actionKey = `${session.id}:transcribe`;
+  if (queuedSessionActions.has(actionKey)) return false;
+  queuedSessionActions.add(actionKey);
+  loadAndRenderSessions().catch(() => {});
+  enqueueJob({
+    type: "transcribe",
+    label: "Transcribe",
+    sessionId: session.id,
+    sessionLabel: session.meetingLabel || session.tabTitle || "Untitled",
+    run: makeJobRunner(session.id, "transcribe", (s, btn, row, opts) =>
+      transcribeSession(s, btn, row, opts)
+    ),
+  });
+  return true;
+}
+
+/** Entry point right after a recording is saved. */
+async function maybeAutoTranscribe(sessionId) {
+  const enabled = await getAutoTranscribePreference().catch(() => true);
+  if (!enabled || !sessionId) return;
+  await markTranscriptionPending(sessionId);
+  await runAutoTranscribe(sessionId);
+}
+
+/**
+ * Start (or resume) auto-transcription for one recording, fixing what can be
+ * fixed without the user and surfacing a single one-click action when it
+ * cannot. Never throws: this runs in the background.
+ */
+async function runAutoTranscribe(sessionId) {
+  try {
+    const session = await findSession(sessionId);
+    if (!session) {
+      await clearTranscriptionPending(sessionId);
+      return;
+    }
+
+    const pending = await readPendingTranscriptions();
+    const decision = nextAutoTranscribeAction(pending[sessionId], {
+      hasTranscript: !!(session.transcriptText || session._fsTxtPath)
+    });
+    if (decision === "skip-done") {
+      await clearTranscriptionPending(sessionId);
+      return;
+    }
+    if (decision === "give-up") {
+      await clearTranscriptionPending(sessionId);
+      showAttention({
+        message:
+          `Automatic transcription of "${session.meetingLabel || "your recording"}" did not ` +
+          "succeed after several tries. Use the Transcribe button on the recording to see why.",
+      });
+      return;
+    }
+
+    const health = await checkTranscriptionHealth();
+    if (!health.ok) {
+      const blocker = health.blockers[0];
+      if (blocker.code === "model-download-declined") {
+        // The user already said no. Honour it silently rather than reopening
+        // the same question after every recording.
+        await clearTranscriptionPending(sessionId);
+        return;
+      }
+      if (blocker.autoResume === "online") {
+        showAttention({ message: blocker.message });
+        scheduleOnlineRetry();
+        return;
+      }
+      if (blocker.code === "model-download-consent") {
+        showAttention({
+          message: blocker.message,
+          actionLabel: blocker.actionLabel,
+          onAction: async () => {
+            await setModelDownloadConsent(health.modelId, true);
+            clearAttention();
+            await runAutoTranscribe(sessionId);
+          },
+          secondaryLabel: blocker.secondaryLabel,
+          onSecondary: async () => {
+            await setModelDownloadConsent(health.modelId, false);
+            await clearTranscriptionPending(sessionId);
+            clearAttention();
+            statusEl.textContent =
+              "Automatic transcription is off until the model is downloaded. " +
+              "The Transcribe button on a recording will download it.";
+          }
+        });
+        return;
+      }
+      if (blocker.needsGesture) {
+        showAttention({
+          message: blocker.message,
+          actionLabel: blocker.actionLabel,
+          onAction: async () => {
+            await repairTranscriptionBlocker(blocker);
+            clearAttention();
+            await runAutoTranscribe(sessionId);
+          }
+        });
+        return;
+      }
+      showAttention({ message: blocker.message });
+      return;
+    }
+
+    clearAttention();
+    if (enqueueTranscribeJob(session)) {
+      // Count the attempt only when one actually starts, so a duplicate call
+      // cannot burn through the give-up budget.
+      await markTranscriptionPending(sessionId, { countAttempt: true });
+      statusEl.textContent = health.notices.length
+        ? health.notices[0].message
+        : "Transcribing automatically...";
+    }
+  } catch (error) {
+    console.warn("[panel] auto-transcribe could not start", error);
+  }
+}
+
+/** Offline is temporary; come back to it instead of asking the user to retry. */
+function scheduleOnlineRetry() {
+  if (pendingOnlineRetry) return;
+  pendingOnlineRetry = true;
+  window.addEventListener(
+    "online",
+    () => {
+      pendingOnlineRetry = false;
+      clearAttention();
+      resumePendingTranscriptions().catch(() => {});
+    },
+    { once: true }
   );
-  if (!row) return;
-  const btn = row.querySelector('button[data-action="transcribe"]');
-  if (btn && !btn.disabled) {
-    statusEl.textContent = "Auto-transcribing...";
-    btn.click();
+}
+
+/**
+ * Pick up recordings whose transcription never completed: the panel was
+ * closed mid-job, the browser was offline, folder access had lapsed.
+ */
+async function resumePendingTranscriptions() {
+  const pending = await readPendingTranscriptions();
+  const ids = Object.keys(pending);
+  if (ids.length === 0) return;
+  if (!(await getAutoTranscribePreference().catch(() => true))) return;
+  for (const sessionId of ids) {
+    await runAutoTranscribe(sessionId);
   }
 }
 
@@ -2752,6 +3042,19 @@ async function convertSessionToMp3Impl(session, button, row) {
   try {
     handle = await ensureRecordingsHandle({ writable: true });
   } catch (error) {
+    // Reading the recording back needs folder access, and the permission
+    // prompt needs a click we do not have here. Offer that click instead of
+    // leaving a dead status line.
+    showAttention({
+      message:
+        "Transcription needs access to your recordings folder to read the audio back.",
+      actionLabel: "Choose folder",
+      onAction: async () => {
+        await repairTranscriptionBlocker({ code: "folder-not-picked" });
+        clearAttention();
+        await runAutoTranscribe(session.id);
+      }
+    });
     statusEl.textContent = `Folder access not granted: ${error?.message || error}`;
     return;
   }
@@ -2907,17 +3210,17 @@ function encodeMp3InWorker(left, right, sampleRate, onProgress) {
   });
 }
 
-async function transcribeSession(session, button, row) {
+async function transcribeSession(session, button, row, { signal } = {}) {
   startOperation(session?.fileName, "transcribe");
   try {
-    await transcribeSessionImpl(session, button, row);
+    await transcribeSessionImpl(session, button, row, signal);
   } finally {
     endOperation(session?.fileName, "transcribe");
     await loadAndRenderSessions();
   }
 }
 
-async function transcribeSessionImpl(session, button, row) {
+async function transcribeSessionImpl(session, button, row, signal) {
   row = row || button?.closest(".recording-item") || null;
 
   let handle;
@@ -3013,10 +3316,11 @@ async function transcribeSessionImpl(session, button, row) {
   }
 
   setRowProgress(row, { label: "Preparing transcription" });
-  const modelId = await getSelectedModelId();
+  const modelId = await resolveModelId();
   const transcriptionCallbacks = {
     modelId,
     row,
+    signal,
     onDownloadProgress: ({ file: fileName, loaded, total, progress }) => {
       const pct = Number(progress) || (total ? Math.round((loaded / total) * 100) : 0);
       const label = fileName
@@ -3035,6 +3339,12 @@ async function transcribeSessionImpl(session, button, row) {
       ? await transcribeAudioBuffer(audioBuffer, transcriptionPlan, transcriptionCallbacks)
       : await transcribeWebmOpusFile(file, transcriptionPlan, transcriptionCallbacks);
   } catch (error) {
+    if (isAbortError(error) || signal?.aborted) {
+      await clearTranscriptionPending(session.id);
+      statusEl.textContent = "Transcription stopped.";
+      restore();
+      return;
+    }
     const msg = String(error?.message || error);
     console.error("[panel] transcription failed", error);
     statusEl.textContent = `Transcription failed: ${msg}`;
@@ -3105,8 +3415,16 @@ async function transcribeSessionImpl(session, button, row) {
     }
   }
 
+  await clearTranscriptionPending(session.id);
+
   setRowProgress(row, { label: "Done", spinner: false });
-  statusEl.textContent = `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).`;
+  const skipped = Array.isArray(result.failedChunks) ? result.failedChunks.length : 0;
+  statusEl.textContent =
+    `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).` +
+    (skipped
+      ? ` ${skipped} of ${result.chunkCount} chunks stalled and were left out ` +
+        `(${result.failedChunks.map((c) => c.label).join(", ")}).`
+      : "");
 
   await maybeAutoSummarize(session, result.text, handle, row);
   await maybeAutoDiarize(session, result.segments, handle, row);
@@ -3312,7 +3630,7 @@ async function renderMono16k(audioBuffer, { startMs = 0, endMs = null } = {}) {
 async function transcribeAudioBuffer(
   audioBuffer,
   plan,
-  { modelId, row, onDownloadProgress, onSegment } = {}
+  { modelId, row, onDownloadProgress, onSegment, signal } = {}
 ) {
   if (!plan?.chunked) {
     setRowProgress(row, { label: "Resampling audio" });
@@ -3324,7 +3642,12 @@ async function transcribeAudioBuffer(
       onEngine: (device) => {
         setRowProgress(row, { label: formatTranscriptionEngineLabel(device) });
       },
-      onSegment
+      onRecovery: () => {
+        setRowProgress(row, { label: "GPU engine stalled, retrying on CPU" });
+      },
+      onSegment,
+      signal,
+      budgetMs: whisperChunkBudgetMs(Math.round((audioBuffer?.duration || 0) * 1000))
     });
   }
 
@@ -3332,28 +3655,34 @@ async function transcribeAudioBuffer(
     modelId,
     row,
     onDownloadProgress,
-    onSegment
+    onSegment,
+    signal
   });
 }
 
 async function runChunkedWhisperTranscription(
   audioBuffer,
   plan,
-  { modelId, row, onDownloadProgress, onSegment } = {}
+  { modelId, row, onDownloadProgress, onSegment, signal } = {}
 ) {
   const chunkResults = [];
+  const failedChunks = [];
   let activeChunkLabel = "";
   let device = null;
-  const client = createWhisperWorkerClient({
+  const runner = createWhisperChunkRunner({
     modelId,
     onDownloadProgress,
     onEngine: (engine) => {
       setRowProgress(row, { label: formatTranscriptionEngineLabel(engine, activeChunkLabel) });
+    },
+    onRecovery: () => {
+      setRowProgress(row, { label: `Retrying ${activeChunkLabel} on CPU` });
     }
   });
 
   try {
     for (const chunk of plan.chunks) {
+      throwIfAborted(signal);
       activeChunkLabel = formatTranscriptionChunkLabel(chunk);
       setRowProgress(row, { label: `Preparing ${activeChunkLabel}` });
       const pcm16k = await resampleAudioBufferRangeToMono16k(
@@ -3363,48 +3692,98 @@ async function runChunkedWhisperTranscription(
       );
 
       setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
-      const result = await client.transcribe(pcm16k, {
-        onStage: (stage) => {
-          if (stage === "Transcribing") {
-            setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
-          } else {
-            setRowProgress(row, { label: `${stage} (${chunk.index + 1}/${chunk.total})` });
-          }
-        },
-        onSegment: (segment) => {
-          const adjusted = offsetTranscriptionSegment(segment, chunk.audioStartMs);
-          if (segmentBelongsToTranscriptionChunk(adjusted, chunk)) {
-            onSegment?.(adjusted);
-          }
-        }
+      const result = await transcribeOneChunk(runner, pcm16k, chunk, {
+        row,
+        activeChunkLabel,
+        onSegment,
+        signal,
+        failedChunks
       });
+      if (!result) continue;
       device = result.device || device;
       chunkResults.push({ chunk, result });
     }
   } finally {
-    client.terminate();
+    runner.terminate();
+  }
+
+  if (chunkResults.length === 0 && failedChunks.length > 0) {
+    throw new Error(failedChunks[0].error);
   }
 
   return {
     ...mergeTranscriptionChunkResults(chunkResults),
     device,
-    chunkCount: plan.chunks.length
+    chunkCount: plan.chunks.length,
+    failedChunks
   };
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortError();
+}
+
+/**
+ * Transcribe one planned chunk, returning null when the chunk could not be
+ * transcribed. A chunk that stalls twice is recorded in `failedChunks` and
+ * skipped so a long recording still yields a transcript with a gap instead of
+ * losing every already-transcribed chunk.
+ */
+async function transcribeOneChunk(
+  runner,
+  pcm16k,
+  chunk,
+  { row, activeChunkLabel, onSegment, signal, failedChunks } = {}
+) {
+  try {
+    return await runner.transcribe(pcm16k, {
+      signal,
+      budgetMs: whisperChunkBudgetMs(chunk.audioEndMs - chunk.audioStartMs),
+      onStage: (stage) => {
+        if (stage === "Transcribing") {
+          setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
+        } else {
+          setRowProgress(row, { label: `${stage} (${chunk.index + 1}/${chunk.total})` });
+        }
+      },
+      onSegment: (segment) => {
+        const adjusted = offsetTranscriptionSegment(segment, chunk.audioStartMs);
+        if (segmentBelongsToTranscriptionChunk(adjusted, chunk)) {
+          onSegment?.(adjusted);
+        }
+      }
+    });
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) throw error;
+    console.error("[panel] chunk transcription failed", { chunk: activeChunkLabel, error });
+    failedChunks?.push({
+      index: chunk.index,
+      total: chunk.total,
+      label: activeChunkLabel,
+      error: String(error?.message || error)
+    });
+    setRowProgress(row, { label: `Skipped ${activeChunkLabel}` });
+    return null;
+  }
 }
 
 async function transcribeWebmOpusFile(
   file,
   plan,
-  { modelId, row, onDownloadProgress, onSegment } = {}
+  { modelId, row, onDownloadProgress, onSegment, signal } = {}
 ) {
   const chunkResults = [];
+  const failedChunks = [];
   let activeChunkLabel = "";
   let device = null;
-  const client = createWhisperWorkerClient({
+  const runner = createWhisperChunkRunner({
     modelId,
     onDownloadProgress,
     onEngine: (engine) => {
       setRowProgress(row, { label: formatTranscriptionEngineLabel(engine, activeChunkLabel) });
+    },
+    onRecovery: () => {
+      setRowProgress(row, { label: `Retrying ${activeChunkLabel} on CPU` });
     }
   });
 
@@ -3418,35 +3797,34 @@ async function transcribeWebmOpusFile(
     });
 
     for await (const { chunk, pcm16k, packetCount, decodedFrames } of chunks) {
+      throwIfAborted(signal);
       if (!packetCount || !decodedFrames) continue;
       activeChunkLabel = formatTranscriptionChunkLabel(chunk);
       setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
-      const result = await client.transcribe(pcm16k, {
-        onStage: (stage) => {
-          if (stage === "Transcribing") {
-            setRowProgress(row, { label: `Transcribing ${activeChunkLabel}` });
-          } else {
-            setRowProgress(row, { label: `${stage} (${chunk.index + 1}/${chunk.total})` });
-          }
-        },
-        onSegment: (segment) => {
-          const adjusted = offsetTranscriptionSegment(segment, chunk.audioStartMs);
-          if (segmentBelongsToTranscriptionChunk(adjusted, chunk)) {
-            onSegment?.(adjusted);
-          }
-        }
+      const result = await transcribeOneChunk(runner, pcm16k, chunk, {
+        row,
+        activeChunkLabel,
+        onSegment,
+        signal,
+        failedChunks
       });
+      if (!result) continue;
       device = result.device || device;
       chunkResults.push({ chunk, result });
     }
   } finally {
-    client.terminate();
+    runner.terminate();
+  }
+
+  if (chunkResults.length === 0 && failedChunks.length > 0) {
+    throw new Error(failedChunks[0].error);
   }
 
   return {
     ...mergeTranscriptionChunkResults(chunkResults),
     device,
-    chunkCount: plan.chunks.length
+    chunkCount: plan.chunks.length,
+    failedChunks
   };
 }
 
@@ -3469,25 +3847,116 @@ export function formatTranscriptionEngineLabel(device, chunkLabel = "") {
 }
 
 async function runWhisperWorker(pcm16k, options = {}) {
-  const client = createWhisperWorkerClient(options);
+  const runner = createWhisperChunkRunner(options);
   try {
-    return await client.transcribe(pcm16k, options);
+    return await runner.transcribe(pcm16k, options);
   } finally {
-    client.terminate();
+    runner.terminate();
   }
 }
 
-function createWhisperWorkerClient({ modelId, onEngine, onDownloadProgress } = {}) {
+// A wedged ONNX session (most often a WebGPU device that was lost while the
+// machine slept) leaves `transcriber(...)` awaiting GPU work that never
+// completes and never throws, so without a watchdog a single bad chunk hangs
+// the whole job queue indefinitely. The worker heartbeats on every decode step,
+// which lets us treat silence as a stall rather than as slowness.
+const WHISPER_LOAD_STALL_MS = 10 * 60 * 1000;
+const WHISPER_GENERATION_STALL_MS = 3 * 60 * 1000;
+const WHISPER_WATCHDOG_TICK_MS = 5000;
+// Backstop for the case where the library never invokes callback_function, so
+// there is no per-step liveness signal at all: cap a chunk at a generous
+// multiple of its own audio length instead of letting it run forever.
+const WHISPER_CHUNK_BUDGET_FLOOR_MS = 20 * 60 * 1000;
+const WHISPER_CHUNK_BUDGET_REALTIME_FACTOR = 10;
+
+export function whisperChunkBudgetMs(audioMs) {
+  const audio = Number(audioMs);
+  if (!Number.isFinite(audio) || audio <= 0) return WHISPER_CHUNK_BUDGET_FLOOR_MS;
+  return Math.max(WHISPER_CHUNK_BUDGET_FLOOR_MS, audio * WHISPER_CHUNK_BUDGET_REALTIME_FACTOR);
+}
+
+function whisperError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+export function isRecoverableWhisperError(error) {
+  const code = error?.code;
+  return code === "whisper-stalled" || code === "whisper-worker-error";
+}
+
+function createWhisperWorkerClient({
+  modelId,
+  onEngine,
+  onDownloadProgress,
+  device = null,
+  loadStallMs = WHISPER_LOAD_STALL_MS,
+  generationStallMs = WHISPER_GENERATION_STALL_MS
+} = {}) {
   const workerUrl = chrome.runtime.getURL("lib/whisperWorker.js");
   const worker = new Worker(workerUrl, { type: "module" });
+  const resolvedModelId = modelId || DEFAULT_WHISPER_MODEL_ID;
   let activeJob = null;
   let closed = false;
+  let watchdogId = null;
 
-  const rejectActive = (error) => {
+  const stopWatchdog = () => {
+    if (watchdogId == null) return;
+    clearInterval(watchdogId);
+    watchdogId = null;
+  };
+
+  const settleActive = (settle) => {
+    stopWatchdog();
     if (!activeJob) return;
     const job = activeJob;
     activeJob = null;
-    job.reject(error);
+    try { job.cleanup?.(); } catch (_) {}
+    settle(job);
+  };
+
+  const rejectActive = (error) => settleActive((job) => job.reject(error));
+
+  const touch = () => {
+    if (activeJob) activeJob.lastActivityAt = Date.now();
+  };
+
+  const startWatchdog = () => {
+    stopWatchdog();
+    watchdogId = setInterval(() => {
+      if (!activeJob) {
+        stopWatchdog();
+        return;
+      }
+      // Model load blocks the worker thread (so it cannot heartbeat) and is
+      // allowed to be slow; generation must show a per-step pulse, but only
+      // once the worker has proven it emits one.
+      const now = Date.now();
+      const idleMs = now - activeJob.lastActivityAt;
+      const elapsedMs = now - activeJob.startedAt;
+      const idleLimit =
+        activeJob.generating && activeJob.sawStepHeartbeat ? generationStallMs : loadStallMs;
+      const overBudget = activeJob.budgetMs > 0 && elapsedMs >= activeJob.budgetMs;
+      if (idleMs < idleLimit && !overBudget) return;
+      const engineName = device === "wasm" ? "CPU" : "GPU";
+      const reason = overBudget
+        ? `ran past its ${Math.round(activeJob.budgetMs / 60000)}m budget`
+        : `stopped responding for ${Math.max(1, Math.round(idleMs / 60000))}m`;
+      console.error("[panel] whisper worker stalled", {
+        idleMs,
+        elapsedMs,
+        budgetMs: activeJob.budgetMs,
+        generating: activeJob.generating,
+        sawStepHeartbeat: activeJob.sawStepHeartbeat,
+        device: device || "auto"
+      });
+      closed = true;
+      worker.terminate();
+      rejectActive(
+        whisperError(`Whisper ${reason} on the ${engineName} engine.`, "whisper-stalled")
+      );
+    }, WHISPER_WATCHDOG_TICK_MS);
   };
 
   worker.onmessage = (event) => {
@@ -3498,7 +3967,13 @@ function createWhisperWorkerClient({ modelId, onEngine, onDownloadProgress } = {
       return;
     }
     if (!activeJob || data.jobId !== activeJob.jobId) return;
+    touch();
+    if (data.type === "heartbeat") {
+      if (data.stepped) activeJob.sawStepHeartbeat = true;
+      return;
+    }
     if (data.type === "stage") {
+      if (data.stage === "Transcribing") activeJob.generating = true;
       try { activeJob.onStage?.(data.stage); } catch (_) {}
       return;
     }
@@ -3517,13 +3992,12 @@ function createWhisperWorkerClient({ modelId, onEngine, onDownloadProgress } = {
       return;
     }
     if (data.type === "done") {
-      const job = activeJob;
-      activeJob = null;
-      job.resolve({
+      const payload = {
         text: data.text || "",
         segments: data.segments || [],
         device: data.device || null
-      });
+      };
+      settleActive((job) => job.resolve(payload));
       return;
     }
     if (data.type === "error") {
@@ -3535,73 +4009,219 @@ function createWhisperWorkerClient({ modelId, onEngine, onDownloadProgress } = {
     console.error("[panel] whisper worker errored", event);
     worker.terminate();
     closed = true;
-    rejectActive(new Error(detail || "Worker error (no details from runtime)"));
+    rejectActive(
+      whisperError(detail || "Worker error (no details from runtime)", "whisper-worker-error")
+    );
   };
   worker.onmessageerror = (event) => {
     console.error("[panel] whisper worker message error", event);
     worker.terminate();
     closed = true;
-    rejectActive(new Error("Worker message error (postMessage cloning failed)"));
+    rejectActive(
+      whisperError("Worker message error (postMessage cloning failed)", "whisper-worker-error")
+    );
   };
 
   return {
-    transcribe(pcm16k, { onSegment, onStage } = {}) {
+    get closed() {
+      return closed;
+    },
+    transcribe(pcm16k, { onSegment, onStage, signal, budgetMs = 0 } = {}) {
       if (closed) return Promise.reject(new Error("Whisper worker is closed."));
       if (activeJob) return Promise.reject(new Error("Whisper worker already has an active job."));
+      if (signal?.aborted) return Promise.reject(abortError());
 
       return new Promise((resolve, reject) => {
         const jobId = Math.random().toString(36).slice(2, 10);
-        activeJob = { jobId, resolve, reject, onSegment, onStage };
 
-        const pcm =
-          pcm16k instanceof Float32Array ? pcm16k : new Float32Array(pcm16k || []);
-        const transferablePcm =
-          pcm.byteOffset === 0 && pcm.byteLength === pcm.buffer.byteLength
-            ? pcm
-            : new Float32Array(pcm);
+        const onAbort = () => {
+          closed = true;
+          worker.terminate();
+          rejectActive(abortError());
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+
+        activeJob = {
+          jobId,
+          resolve,
+          reject,
+          onSegment,
+          onStage,
+          generating: false,
+          sawStepHeartbeat: false,
+          budgetMs: Number(budgetMs) > 0 ? Number(budgetMs) : 0,
+          startedAt: Date.now(),
+          lastActivityAt: Date.now(),
+          cleanup: () => signal?.removeEventListener("abort", onAbort)
+        };
+
+        // Always hand the worker its own copy: the buffer is transferred (and
+        // therefore detached), and a stalled chunk has to be retriable from the
+        // caller's PCM.
+        const source = pcm16k instanceof Float32Array ? pcm16k : new Float32Array(pcm16k || []);
+        const transferablePcm = new Float32Array(source);
 
         try {
           worker.postMessage(
             {
               type: "transcribe",
               jobId,
-              modelId: modelId || "Xenova/whisper-small.en",
+              modelId: resolvedModelId,
+              dtypes: modelDtypes(resolvedModelId),
+              device: device || undefined,
               pcm: transferablePcm,
               language: "english"
             },
             [transferablePcm.buffer]
           );
+          startWatchdog();
         } catch (error) {
-          activeJob = null;
-          reject(error);
+          settleActive((job) => job.reject(error));
         }
       });
     },
     terminate() {
       if (closed) return;
       closed = true;
+      stopWatchdog();
       worker.terminate();
       rejectActive(new Error("Whisper worker terminated."));
     }
   };
 }
 
-async function openRecordingsFolder() {
-  // chrome.downloads.show(id) opens the OS file manager focused on a download.
-  // We prefer to show the most-recent Tab Recorder webm so the user lands
-  // inside `~/Downloads/Tab Recorder/<date>/`. If no Tab Recorder downloads
-  // are tracked yet, fall back to the default Downloads folder.
+/**
+ * Owns a whisper worker across a multi-chunk transcription and recovers from a
+ * wedged or crashed worker: the client is rebuilt and the chunk retried, with
+ * the retry pinned to the CPU engine because a lost WebGPU device does not come
+ * back within the same worker.
+ */
+function createWhisperChunkRunner({ modelId, onDownloadProgress, onEngine, onRecovery } = {}) {
+  let client = null;
+  let forcedDevice = null;
+
+  const ensureClient = () => {
+    if (client && !client.closed) return client;
+    client = createWhisperWorkerClient({
+      modelId,
+      onDownloadProgress,
+      onEngine,
+      device: forcedDevice
+    });
+    return client;
+  };
+
+  return {
+    get device() {
+      return forcedDevice;
+    },
+    async transcribe(pcm16k, handlers = {}) {
+      let lastError = null;
+      // Two attempts: the original engine, then a fresh worker on CPU.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const current = ensureClient();
+        try {
+          return await current.transcribe(pcm16k, handlers);
+        } catch (error) {
+          lastError = error;
+          if (handlers.signal?.aborted || !isRecoverableWhisperError(error) || attempt === 2) {
+            throw error;
+          }
+          try { current.terminate(); } catch (_) {}
+          client = null;
+          forcedDevice = "wasm";
+          console.warn("[panel] retrying chunk on CPU after whisper failure", error);
+          try { onRecovery?.(error); } catch (_) {}
+        }
+      }
+      throw lastError;
+    },
+    terminate() {
+      try { client?.terminate(); } catch (_) {}
+      client = null;
+    }
+  };
+}
+
+function abortError() {
+  const error = new Error("Cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+export function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+// Name of the marker file written into the recordings root so the OS file
+// manager has something inside that folder to reveal. chrome.downloads.show
+// can only focus a *file*, and it opens that file's containing folder.
+const RECORDINGS_FOLDER_MARKER = "Tab Recorder/About this folder.txt";
+
+async function findRootRecordingsDownload() {
+  // Matches a download that sits directly in `Tab Recorder/` (no day folder in
+  // between), on both POSIX and Windows separators.
+  const matches = await chrome.downloads
+    .search({
+      filenameRegex: "Tab Recorder[/\\\\][^/\\\\]+$",
+      orderBy: ["-startTime"],
+      limit: 1,
+      exists: true
+    })
+    .catch(() => []);
+  return Array.isArray(matches) && matches.length > 0 ? matches[0] : null;
+}
+
+async function hasTabRecorderDownloads() {
+  const matches = await chrome.downloads
+    .search({ filenameRegex: "Tab Recorder[/\\\\]", limit: 1, exists: true })
+    .catch(() => []);
+  return Array.isArray(matches) && matches.length > 0;
+}
+
+async function createRecordingsFolderMarker() {
+  const text =
+    "Tab Recorder saves each recording into a subfolder named for the day it " +
+    "was recorded.\n\nThis file lets the extension's \"Open Folder\" button " +
+    "reveal this folder in your file manager; you can safely delete it.\n";
+  const blobUrl = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
   try {
-    const matches = await chrome.downloads
-      .search({
-        filenameRegex: "Tab Recorder.*\\.webm$",
-        orderBy: ["-startTime"],
-        limit: 1,
-        exists: true
-      })
-      .catch(() => []);
-    if (Array.isArray(matches) && matches.length > 0) {
-      chrome.downloads.show(matches[0].id);
+    const downloadId = await chrome.downloads.download({
+      url: blobUrl,
+      filename: RECORDINGS_FOLDER_MARKER,
+      saveAs: false,
+      conflictAction: "overwrite"
+    });
+    await waitForDownloadComplete(downloadId);
+    return downloadId;
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  }
+}
+
+async function openRecordingsFolder() {
+  // chrome.downloads.show(id) opens the OS file manager focused on a download,
+  // i.e. it opens the folder *containing* that file. Recordings live in
+  // `~/Downloads/Tab Recorder/<date>/`, so showing a webm would open the dated
+  // folder rather than the recordings root this button is labeled for. Reveal a
+  // file that sits directly in `Tab Recorder/` instead, writing a small marker
+  // file there the first time if the folder has none.
+  try {
+    let match = await findRootRecordingsDownload();
+    if (!match && (await hasTabRecorderDownloads())) {
+      // Only write the marker when `Downloads/Tab Recorder` is actually in use;
+      // otherwise (e.g. recordings go to a folder picked via the File System
+      // Access API, which the browser cannot reveal) fall back to Downloads
+      // rather than creating a stray folder.
+      const markerId = await createRecordingsFolderMarker().catch(() => null);
+      if (Number.isInteger(markerId)) {
+        chrome.downloads.show(markerId);
+        return;
+      }
+      match = await findRootRecordingsDownload();
+    }
+    if (match) {
+      chrome.downloads.show(match.id);
       return;
     }
     chrome.downloads.showDefaultFolder();

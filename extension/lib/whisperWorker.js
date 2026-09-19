@@ -51,7 +51,31 @@ const importPromise = (async () => {
 
 let pipelinePromise = null;
 let activeModelId = null;
+let activePipelineDevice = null;
 let activeDevice = null;
+
+// Heartbeat throttle. Generation can run for minutes without emitting a new
+// transcript segment, so the panel needs a separate liveness signal to tell
+// "slow" apart from "wedged" (a lost WebGPU device leaves ONNX Runtime waiting
+// on GPU work that never completes, with no error).
+let lastHeartbeatAt = 0;
+let steppedHeartbeatSent = false;
+
+// `stepped` marks a heartbeat that came from the generation callback. The panel
+// only arms its strict "no progress" timeout once it has seen one, so a
+// transformers.js build that never invokes callback_function cannot cause a
+// healthy-but-slow chunk to be killed.
+function heartbeat(jobId, stepped = false) {
+  const now = Date.now();
+  if (!stepped && now - lastHeartbeatAt < 1000) return;
+  if (stepped && now - lastHeartbeatAt < 1000) {
+    // Still throttled, but the panel needs to learn that stepping works.
+    if (steppedHeartbeatSent) return;
+  }
+  lastHeartbeatAt = now;
+  if (stepped) steppedHeartbeatSent = true;
+  send(jobId, { type: "heartbeat", stepped });
+}
 
 self.onmessage = async (event) => {
   const data = event.data || {};
@@ -69,7 +93,7 @@ self.onmessage = async (event) => {
 
   if (type === "warmup") {
     try {
-      await ensurePipeline(data.modelId, jobId);
+      await ensurePipeline(data.modelId, jobId, data.device, data.dtypes);
       self.postMessage({ type: "done", jobId, text: "", segments: [], device: activeDevice });
     } catch (error) {
       sendError(jobId, error);
@@ -79,8 +103,11 @@ self.onmessage = async (event) => {
 
   if (type === "transcribe") {
     try {
-      const transcriber = await ensurePipeline(data.modelId, jobId);
+      const transcriber = await ensurePipeline(data.modelId, jobId, data.device, data.dtypes);
       send(jobId, { type: "stage", stage: "Transcribing" });
+      lastHeartbeatAt = 0;
+      steppedHeartbeatSent = false;
+      heartbeat(jobId);
 
       const audio =
         data.pcm instanceof Float32Array ? data.pcm : new Float32Array(data.pcm);
@@ -104,6 +131,7 @@ self.onmessage = async (event) => {
       const out = await transcriber(audio, {
         ...callOptions,
         callback_function: (beams) => {
+          heartbeat(jobId, true);
           if (!beams || !beams.length) return;
           const top = beams[0];
           const chunks = top?.output_token_ids ? null : top?.chunks;
@@ -169,22 +197,44 @@ self.onmessage = async (event) => {
   }
 };
 
-async function ensurePipeline(modelId, jobId) {
-  const desired = String(modelId || "Xenova/whisper-small.en");
-  if (pipelinePromise && activeModelId === desired) return pipelinePromise;
-  if (pipelinePromise && activeModelId !== desired) {
-    // Different model requested — drop the old pipeline so the new one loads fresh.
+async function ensurePipeline(modelId, jobId, requestedDevice, requestedDtypes) {
+  const desired = String(modelId || "onnx-community/distil-small.en");
+  // "wasm" is requested when the panel retries a chunk after a stall, so the
+  // cache key has to include the device or the retry would reuse the same
+  // (possibly wedged) WebGPU pipeline.
+  const device = requestedDevice === "wasm" || requestedDevice === "webgpu" ? requestedDevice : "auto";
+  if (pipelinePromise && activeModelId === desired && activePipelineDevice === device) {
+    return pipelinePromise;
+  }
+  if (pipelinePromise) {
+    // Different model or device requested: drop the old pipeline so the new
+    // one loads fresh.
     pipelinePromise = null;
     activeDevice = null;
   }
   activeModelId = desired;
-  pipelinePromise = createPipeline(desired, jobId);
+  activePipelineDevice = device;
+  pipelinePromise = createPipeline(desired, jobId, device, requestedDtypes);
   return pipelinePromise;
 }
 
-async function createPipeline(modelId, jobId) {
+// Preferred first, then progressively safer. A full-precision encoder with a
+// 4-bit decoder is both the smallest sane download and what the transformers.js
+// WebGPU examples use; plain fp32 is the rung that always works but costs
+// several hundred extra megabytes.
+const DEFAULT_DTYPES = [{ encoder_model: "fp32", decoder_model_merged: "q4" }, "fp32"];
+
+function describeDtype(dtype) {
+  if (typeof dtype === "string") return dtype;
+  return Object.entries(dtype || {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join(",");
+}
+
+async function createPipeline(modelId, jobId, device = "auto", requestedDtypes) {
   send(jobId, { type: "stage", stage: "Loading model" });
   const progressCallback = (progress) => {
+    heartbeat(jobId);
     if (!progress) return;
     if (progress.status === "progress") {
       send(jobId, {
@@ -199,26 +249,45 @@ async function createPipeline(modelId, jobId) {
     }
   };
 
-  // Try WebGPU first; fall back to WASM if it isn't available or fails to init.
-  try {
-    const pipe = await pipeline("automatic-speech-recognition", modelId, {
-      device: "webgpu",
-      dtype: "fp32",
-      progress_callback: progressCallback
-    });
-    activeDevice = "webgpu";
-    send(jobId, { type: "engine", device: "webgpu" });
-    return pipe;
-  } catch (error) {
-    console.warn("[whisperWorker] WebGPU unavailable, falling back to WASM", error);
-    const pipe = await pipeline("automatic-speech-recognition", modelId, {
-      device: "wasm",
-      progress_callback: progressCallback
-    });
-    activeDevice = "wasm";
-    send(jobId, { type: "engine", device: "wasm" });
-    return pipe;
+  const dtypes =
+    Array.isArray(requestedDtypes) && requestedDtypes.length ? requestedDtypes : DEFAULT_DTYPES;
+  // WebGPU first unless the caller pinned the CPU backend (which happens when a
+  // GPU session has already wedged once).
+  const devices = device === "wasm" ? ["wasm"] : ["webgpu", "wasm"];
+
+  let lastError = null;
+  for (const target of devices) {
+    for (const dtype of dtypes) {
+      try {
+        const pipe = await pipeline("automatic-speech-recognition", modelId, {
+          device: target,
+          dtype,
+          progress_callback: progressCallback
+        });
+        activeDevice = target;
+        send(jobId, { type: "engine", device: target });
+        console.log("[whisperWorker] pipeline ready", {
+          modelId,
+          device: target,
+          dtype: describeDtype(dtype)
+        });
+        return pipe;
+      } catch (error) {
+        lastError = error;
+        // A dtype that the runtime cannot build a session for (older q8/q4
+        // exports hit this) and an unavailable WebGPU adapter look the same
+        // from here: move to the next rung.
+        console.warn("[whisperWorker] pipeline attempt failed", {
+          modelId,
+          device: target,
+          dtype: describeDtype(dtype),
+          error: String(error?.message || error)
+        });
+      }
+    }
   }
+
+  throw lastError || new Error(`Could not load ${modelId} on any backend.`);
 }
 
 function send(jobId, payload) {

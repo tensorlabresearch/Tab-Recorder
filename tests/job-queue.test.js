@@ -107,11 +107,48 @@ describe("cancel", () => {
     expect(cancelled?.status).toBe("cancelled");
   });
 
-  it("cannot cancel a running job", async () => {
-    const blocker = new Promise(() => {});
-    const run = vi.fn().mockReturnValue(blocker);
+  it("aborts a running job's signal and marks it cancelled", async () => {
+    let capturedSignal = null;
+    const run = vi.fn(
+      ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          capturedSignal = signal;
+          signal.addEventListener("abort", () => {
+            const error = new Error("Cancelled.");
+            error.name = "AbortError";
+            reject(error);
+          });
+        })
+    );
     const job = enqueue({ type: "transcribe", label: "T", sessionId: "s1", run });
     await vi.waitFor(() => expect(getCurrentJob()?.id).toBe(job.id));
+
+    expect(cancel(job.id)).toBe(true);
+    expect(capturedSignal?.aborted).toBe(true);
+    await vi.waitFor(() =>
+      expect(getAllJobs().find((j) => j.id === job.id)?.status).toBe("cancelled")
+    );
+    expect(getAllJobs().find((j) => j.id === job.id)?.error).toBeUndefined();
+  });
+
+  it("marks a running job cancelled even when its runner resolves normally", async () => {
+    let release;
+    const run = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const job = enqueue({ type: "transcribe", label: "T", sessionId: "s1", run });
+    await vi.waitFor(() => expect(getCurrentJob()?.id).toBe(job.id));
+
+    expect(cancel(job.id)).toBe(true);
+    release();
+    await vi.waitFor(() =>
+      expect(getAllJobs().find((j) => j.id === job.id)?.status).toBe("cancelled")
+    );
+  });
+
+  it("returns false for an already finished job", async () => {
+    const job = enqueue({ type: "transcribe", label: "T", sessionId: "s1", run: vi.fn() });
+    await vi.waitFor(() =>
+      expect(getAllJobs().find((j) => j.id === job.id)?.status).toBe("done")
+    );
     expect(cancel(job.id)).toBe(false);
   });
 

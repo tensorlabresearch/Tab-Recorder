@@ -48,8 +48,8 @@ describe("getSelectedModelId / setSelectedModelId", () => {
 });
 
 describe("getAutoTranscribePreference / setAutoTranscribePreference", () => {
-  it("defaults to false when nothing has been set", async () => {
-    expect(await mod.getAutoTranscribePreference()).toBe(false);
+  it("defaults to true when nothing has been set", async () => {
+    expect(await mod.getAutoTranscribePreference()).toBe(true);
   });
 
   it("round-trips boolean true", async () => {
@@ -64,17 +64,19 @@ describe("getAutoTranscribePreference / setAutoTranscribePreference", () => {
     expect(await mod.getAutoTranscribePreference()).toBe(false);
   });
 
-  it("returns false when the stored value isn't strictly boolean true", async () => {
+  it("only an explicit false opts out", async () => {
     await chrome.storage.local.set({ autoTranscribeOnStop: 1 });
-    expect(await mod.getAutoTranscribePreference()).toBe(false);
-    await chrome.storage.local.set({ autoTranscribeOnStop: "true" });
+    expect(await mod.getAutoTranscribePreference()).toBe(true);
+    await chrome.storage.local.set({ autoTranscribeOnStop: "false" });
+    expect(await mod.getAutoTranscribePreference()).toBe(true);
+    await chrome.storage.local.set({ autoTranscribeOnStop: false });
     expect(await mod.getAutoTranscribePreference()).toBe(false);
   });
 
-  it("returns false if chrome.storage throws", async () => {
+  it("stays on if chrome.storage throws", async () => {
     chromeMock.restore();
     delete globalThis.chrome;
-    expect(await mod.getAutoTranscribePreference()).toBe(false);
+    expect(await mod.getAutoTranscribePreference()).toBe(true);
   });
 });
 
@@ -112,5 +114,59 @@ describe("isModelCached", () => {
     delete globalThis.caches;
     if (typeof self !== "undefined") delete self.caches;
     expect(await mod.isModelCached("Xenova/whisper-base.en")).toBe(false);
+  });
+});
+
+describe("resolveModelId", () => {
+  it("returns the default when nothing is stored and nothing is cached", async () => {
+    expect(await mod.resolveModelId()).toBe(mod.DEFAULT_WHISPER_MODEL_ID);
+  });
+
+  it("honours an explicit selection over a cached model", async () => {
+    await mod.setSelectedModelId("Xenova/whisper-tiny.en");
+    expect(await mod.resolveModelId()).toBe("Xenova/whisper-tiny.en");
+  });
+
+  it("prefers a model that is already cached when nothing is selected", async () => {
+    const cached = new Set(["Xenova/whisper-small.en"]);
+    globalThis.caches = {
+      open: async () => ({
+        keys: async () =>
+          [...cached].map((id) => ({
+            url: `https://huggingface.co/${id}/resolve/main/onnx/encoder_model.onnx`
+          }))
+      })
+    };
+    try {
+      expect(await mod.resolveModelId()).toBe("Xenova/whisper-small.en");
+    } finally {
+      delete globalThis.caches;
+    }
+  });
+});
+
+describe("getModelDownloadConsent / setModelDownloadConsent", () => {
+  const MODEL = "onnx-community/distil-small.en";
+
+  it("starts out unset", async () => {
+    expect(await mod.getModelDownloadConsent(MODEL)).toBe("unset");
+  });
+
+  it("round-trips granted and declined", async () => {
+    await mod.setModelDownloadConsent(MODEL, true);
+    expect(await mod.getModelDownloadConsent(MODEL)).toBe("granted");
+    await mod.setModelDownloadConsent(MODEL, false);
+    expect(await mod.getModelDownloadConsent(MODEL)).toBe("declined");
+  });
+
+  it("asks again when a different model is selected", async () => {
+    await mod.setModelDownloadConsent(MODEL, true);
+    expect(await mod.getModelDownloadConsent("Xenova/whisper-small.en")).toBe("unset");
+  });
+
+  it("is unset when chrome.storage is unavailable", async () => {
+    chromeMock.restore();
+    delete globalThis.chrome;
+    expect(await mod.getModelDownloadConsent(MODEL)).toBe("unset");
   });
 });

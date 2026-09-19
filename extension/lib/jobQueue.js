@@ -14,7 +14,8 @@
  * @property {string} label       - Human-readable label for the job
  * @property {string} sessionId   - Session ID the job operates on
  * @property {string} sessionLabel - Display name of the session
- * @property {function} run       - Async function that does the work
+ * @property {function} run       - Async function that does the work; receives
+ *                                 `{ signal }` so a running job can be stopped
  * @property {"queued"|"running"|"done"|"error"|"cancelled"} status
  * @property {string} [error]     - Error message if status === "error"
  * @property {string} [progressLabel] - Current progress label for running jobs
@@ -91,6 +92,9 @@ export function enqueue(opts) {
     run: opts.run,
     status: "queued",
     enqueuedAt: Date.now(),
+    // Lets a *running* job be stopped: without this a wedged job would block
+    // the queue forever, since processQueue awaits run() to settle.
+    controller: new AbortController(),
   };
   queue.push(job);
   notify(job);
@@ -110,13 +114,23 @@ export function updateJobProgress(label) {
 }
 
 /**
- * Cancel a queued job (cannot cancel a running job).
+ * Cancel a job. A queued job is dropped outright; a running job is asked to
+ * stop through its abort signal and is marked cancelled when its runner
+ * unwinds.
  * @param {string} jobId
  * @returns {boolean}
  */
 export function cancel(jobId) {
-  const job = queue.find((j) => j.id === jobId && j.status === "queued");
+  const job = queue.find((j) => j.id === jobId);
   if (!job) return false;
+  if (job.status === "running") {
+    job.cancelRequested = true;
+    job.progressLabel = "Stopping...";
+    try { job.controller?.abort(); } catch (_) {}
+    notify(job);
+    return true;
+  }
+  if (job.status !== "queued") return false;
   job.status = "cancelled";
   job.endedAt = Date.now();
   notify(job);
@@ -160,11 +174,15 @@ async function processQueue() {
       job.startedAt = Date.now();
       notify(job);
       try {
-        await job.run();
-        job.status = "done";
+        await job.run({ signal: job.controller?.signal });
+        job.status = job.cancelRequested ? "cancelled" : "done";
       } catch (err) {
-        job.status = "error";
-        job.error = err?.message || String(err);
+        if (job.cancelRequested || err?.name === "AbortError") {
+          job.status = "cancelled";
+        } else {
+          job.status = "error";
+          job.error = err?.message || String(err);
+        }
       }
       job.endedAt = Date.now();
       notify(job);

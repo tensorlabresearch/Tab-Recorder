@@ -3,6 +3,7 @@ import {
   WHISPER_MODELS,
   DEFAULT_WHISPER_MODEL_ID,
   findModel,
+  modelDtypes,
   formatModelSize
 } from "../extension/lib/whisperModel.js";
 
@@ -22,9 +23,26 @@ describe("WHISPER_MODELS registry", () => {
     }
   });
 
-  it("ids follow the Xenova/whisper-* naming convention", () => {
+  it("ids point at a Hugging Face repo we host models from", () => {
     for (const m of WHISPER_MODELS) {
-      expect(m.id).toMatch(/^Xenova\/whisper-/);
+      expect(m.id).toMatch(/^(Xenova|onnx-community)\//);
+    }
+  });
+
+  it("every entry carries an ordered dtype fallback list", () => {
+    for (const m of WHISPER_MODELS) {
+      expect(Array.isArray(m.dtypes)).toBe(true);
+      expect(m.dtypes.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps the encoder at full precision wherever the download allows it", () => {
+    // Quantizing a whisper encoder is what wrecks accuracy; large-v3-turbo is
+    // the one exception because its fp32 encoder is 2.5 GB.
+    for (const m of WHISPER_MODELS) {
+      if (m.id.includes("large-v3-turbo")) continue;
+      expect(m.dtypes[0].encoder_model).toBe("fp32");
+      expect(m.dtypes[0].decoder_model_merged).toBe("q4");
     }
   });
 
@@ -37,8 +55,8 @@ describe("WHISPER_MODELS registry", () => {
     expect(WHISPER_MODELS.some((m) => m.id === DEFAULT_WHISPER_MODEL_ID)).toBe(true);
   });
 
-  it("DEFAULT_WHISPER_MODEL_ID is the small English model", () => {
-    expect(DEFAULT_WHISPER_MODEL_ID).toBe("Xenova/whisper-small.en");
+  it("DEFAULT_WHISPER_MODEL_ID is distil-small.en", () => {
+    expect(DEFAULT_WHISPER_MODEL_ID).toBe("onnx-community/distil-small.en");
   });
 });
 
@@ -57,6 +75,20 @@ describe("findModel", () => {
     expect(findModel(null)).toBeNull();
     expect(findModel(undefined)).toBeNull();
     expect(findModel("")).toBeNull();
+  });
+});
+
+describe("modelDtypes", () => {
+  it("returns the model's own ladder", () => {
+    expect(modelDtypes("onnx-community/whisper-large-v3-turbo")[0]).toEqual({
+      encoder_model: "q4",
+      decoder_model_merged: "q4"
+    });
+  });
+
+  it("falls back to the hybrid ladder for an unknown id", () => {
+    const dtypes = modelDtypes("Xenova/whisper-mythical");
+    expect(dtypes[0]).toEqual({ encoder_model: "fp32", decoder_model_merged: "q4" });
   });
 });
 
