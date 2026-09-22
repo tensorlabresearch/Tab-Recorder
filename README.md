@@ -219,6 +219,31 @@ tags pushed by `auto-release.yml` use `GITHUB_TOKEN`, which does not trigger
 other workflows — that is why the CWS submission step lives in both workflow
 files rather than relying on `release.yml` firing from the auto-pushed tag.
 
+#### When submission fails
+
+The submission is best-effort: the tag, the zip and the GitHub Release are
+already published by the time it runs, so a store problem leaves the run
+green with a warning annotation and a job-summary note rather than marking
+the whole release failed. Flip `continue-on-error` on the
+`Submit to Chrome Web Store` step if you would rather it be fatal.
+
+A `Verify Chrome Web Store credentials` step exchanges the refresh token
+before submitting, because `bpp` otherwise reports nothing but a bare HTTP
+status (`Response code 400`): its Chrome client suppresses HTTP errors on
+the upload call only, so a raw status code means the OAuth refresh or the
+publish call failed, with no indication which. The preflight names the
+actual OAuth error (`invalid_grant`, `invalid_client`, ...) in the log.
+
+The usual cause of a sudden `invalid_grant` is refresh-token expiry: while
+the Google Cloud OAuth consent screen is in **Testing**, refresh tokens stop
+working after 7 days. Either publish the consent screen (Google Cloud
+Console → APIs & Services → OAuth consent screen → Publish app) or re-mint
+the token with `node tools/get-cws-refresh-token.mjs` after each lapse.
+
+Also note that `bpp` formats its errors as ``Item "<extId>" (<name>)`` inside
+another pair of quotes, so `Item ""kikhk..."` in a log is its own quoting,
+not a malformed `extId`.
+
 ## Repo layout
 
 ```

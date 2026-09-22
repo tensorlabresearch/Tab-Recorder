@@ -172,9 +172,89 @@ jobs:
             echo "BPP_KEYS secret not configured — skipping Chrome Web Store submission."
           fi
 
-      - name: Submit to Chrome Web Store
+      # "Response code 400" from bpp is opaque: the Chrome Web Store client
+      # throws got's raw HTTPError, and only the upload call suppresses HTTP
+      # errors, so a bare status code means the OAuth token refresh or the
+      # publish call failed. Exchange the refresh token here first so the log
+      # names the actual reason (invalid_grant, invalid_client, ...) instead.
+      - name: Verify Chrome Web Store credentials
+        id: cws-preflight
         if: steps.skip.outputs.skip != 'true' && steps.bpp-keys.outputs.set == 'true'
-        uses: PlasmoHQ/bpp@v2
+        shell: bash
+        env:
+          BPP_KEYS: ${{ secrets.BPP_KEYS }}
+        run: |
+          set -euo pipefail
+
+          if ! jq -e . >/dev/null 2>&1 <<<"$BPP_KEYS"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=BPP_KEYS is not valid JSON." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CLIENT_ID=$(jq -r '.chrome.clientId // empty' <<<"$BPP_KEYS")
+          CLIENT_SECRET=$(jq -r '.chrome.clientSecret // empty' <<<"$BPP_KEYS")
+          REFRESH_TOKEN=$(jq -r '.chrome.refreshToken // empty' <<<"$BPP_KEYS")
+
+          # GitHub masks the secret as a whole, not the fields parsed out of it.
+          for value in "$CLIENT_ID" "$CLIENT_SECRET" "$REFRESH_TOKEN"; do
+            if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+          done
+
+          if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ] || [ -z "$REFRESH_TOKEN" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=BPP_KEYS is missing chrome.clientId, chrome.clientSecret or chrome.refreshToken." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RESPONSE=$(curl -sS -X POST https://www.googleapis.com/oauth2/v4/token \
+            -d client_id="$CLIENT_ID" \
+            -d client_secret="$CLIENT_SECRET" \
+            -d refresh_token="$REFRESH_TOKEN" \
+            -d grant_type=refresh_token) || RESPONSE='{"error":"request_failed"}'
+
+          ACCESS_TOKEN=$(jq -r '.access_token // empty' <<<"$RESPONSE")
+          if [ -n "$ACCESS_TOKEN" ]; then
+            echo "::add-mask::$ACCESS_TOKEN"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "OAuth refresh succeeded; credentials are live."
+            exit 0
+          fi
+
+          ERROR=$(jq -r '[.error, .error_description] | map(select(. != null)) | join(": ")' <<<"$RESPONSE" || true)
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "reason=OAuth refresh failed (${ERROR:-unknown error}). Re-mint the token with tools/get-cws-refresh-token.mjs; refresh tokens expire after 7 days while the Google Cloud OAuth app is still in Testing." >> "$GITHUB_OUTPUT"
+
+      - name: Submit to Chrome Web Store
+        id: cws-submit
+        if: steps.skip.outputs.skip != 'true' && steps.bpp-keys.outputs.set == 'true' && steps.cws-preflight.outputs.ok == 'true'
+        continue-on-error: true
+        uses: PlasmoHQ/bpp@v3
         with:
           keys: ${{ secrets.BPP_KEYS }}
           artifact: tab-recorder-v${{ steps.version.outputs.version }}.zip
+          verbose: true
+
+      # The release itself (tag, zip, GitHub Release) is already done by this
+      # point, so a store-submission problem must not paint the whole run red.
+      # It surfaces as a warning annotation and a job-summary line instead.
+      - name: Report Chrome Web Store outcome
+        if: always() && steps.skip.outputs.skip != 'true' && steps.bpp-keys.outputs.set == 'true'
+        shell: bash
+        env:
+          PREFLIGHT_OK: ${{ steps.cws-preflight.outputs.ok }}
+          PREFLIGHT_REASON: ${{ steps.cws-preflight.outputs.reason }}
+          SUBMIT_OUTCOME: ${{ steps.cws-submit.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$PREFLIGHT_OK" != "true" ]; then
+            echo "::warning title=Chrome Web Store submission skipped::${PREFLIGHT_REASON}"
+            echo "### Chrome Web Store: skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "${PREFLIGHT_REASON}" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$SUBMIT_OUTCOME" != "success" ]; then
+            echo "::warning title=Chrome Web Store submission failed::Credentials are valid, so the upload or publish call was rejected. See the step log."
+            echo "### Chrome Web Store: submission failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Credentials refreshed fine, so the upload or publish call itself was rejected." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Chrome Web Store: submitted for review" >> "$GITHUB_STEP_SUMMARY"
+          fi
