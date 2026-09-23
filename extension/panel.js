@@ -1973,16 +1973,25 @@ export function renderSessionRow(session) {
   const isInProgress = (action) => inProgressSessionActions.has(`${session.fileName}:${action}`);
   if (fileNameInProgress) row.classList.add("is-working");
 
-  if (!hasTranscript) {
+  {
+    // Always offer transcription, even when a transcript already exists:
+    // re-running is how you compare models or pick up an engine fix. The
+    // rerun overwrites the .txt and .segments.json sidecars in place.
     const transcribeBtn = document.createElement("button");
     transcribeBtn.type = "button";
-    transcribeBtn.className = "row-action";
+    transcribeBtn.className = hasTranscript ? "row-action is-secondary" : "row-action";
     transcribeBtn.dataset.action = "transcribe";
     const transcribing = isInProgress("transcribe") || isQueued("transcribe");
-    transcribeBtn.textContent = transcribing ? "Working..." : "Transcribe";
+    transcribeBtn.textContent = transcribing
+      ? "Working..."
+      : hasTranscript
+        ? "Re-transcribe"
+        : "Transcribe";
     if (transcribing) {
       transcribeBtn.disabled = true;
       transcribeBtn.title = "Transcription is already queued or running.";
+    } else if (hasTranscript) {
+      transcribeBtn.title = "Transcribe again, replacing the existing transcript.";
     }
     actions.appendChild(transcribeBtn);
   }
@@ -2015,16 +2024,21 @@ export function renderSessionRow(session) {
     actions.appendChild(summarizeBtn);
   }
 
-  if (speakerDetectionEnabled && session._fsSegmentsJsonPath && !session._fsDiarizedTxtPath) {
+  if (speakerDetectionEnabled && session._fsSegmentsJsonPath) {
+    // Same reasoning as re-transcribe: diarization is the thing most likely to
+    // be re-run while evaluating a different speaker model.
+    const hasDiarized = !!session._fsDiarizedTxtPath;
     const diarizeBtn = document.createElement("button");
     diarizeBtn.type = "button";
-    diarizeBtn.className = "row-action";
+    diarizeBtn.className = hasDiarized ? "row-action is-secondary" : "row-action";
     diarizeBtn.dataset.action = "diarize";
     const diarizing = isInProgress("diarize") || isQueued("diarize");
-    diarizeBtn.textContent = diarizing ? "Working..." : "Diarize";
+    diarizeBtn.textContent = diarizing ? "Working..." : hasDiarized ? "Re-diarize" : "Diarize";
     if (diarizing) {
       diarizeBtn.disabled = true;
       diarizeBtn.title = "Diarization is already queued or running.";
+    } else if (hasDiarized) {
+      diarizeBtn.title = "Diarize again, replacing the existing speaker-labelled transcript.";
     }
     actions.appendChild(diarizeBtn);
   }
@@ -3224,6 +3238,7 @@ async function transcribeSession(session, button, row, { signal } = {}) {
 
 async function transcribeSessionImpl(session, button, row, signal) {
   row = row || button?.closest(".recording-item") || null;
+  const hadTranscript = !!(session.transcriptText || session._fsTxtPath);
 
   let handle;
   try {
@@ -3389,7 +3404,16 @@ async function transcribeSessionImpl(session, button, row, signal) {
   // can run without re-transcribing. Non-fatal on failure.
   try {
     const segmentsPayload = JSON.stringify(
-      { version: 1, segments: result.segments || [] },
+      {
+        version: 1,
+        // Provenance: without this you cannot tell which model produced a
+        // transcript, which makes comparing two runs guesswork.
+        modelId,
+        device: result.device || null,
+        chunkCount: result.chunkCount || 1,
+        generatedAt: new Date().toISOString(),
+        segments: result.segments || []
+      },
       null,
       2
     );
@@ -3417,12 +3441,27 @@ async function transcribeSessionImpl(session, button, row, signal) {
     }
   }
 
+  // The diarized sidecars were built from the segments we just replaced, so
+  // leaving them behind would show speaker labels for a transcript that no
+  // longer exists. Auto-diarize below regenerates them when it is enabled.
+  if (hadTranscript) {
+    try {
+      await removeRecordingArtifact(handle, session.fileName, {
+        extensions: ["diarized.txt", "diarized.json"]
+      });
+    } catch (error) {
+      console.warn("[panel] could not clear stale diarized sidecars", error);
+    }
+  }
+
   await clearTranscriptionPending(session.id);
 
   setRowProgress(row, { label: "Done", spinner: false });
   const skipped = Array.isArray(result.failedChunks) ? result.failedChunks.length : 0;
+  const modelLabel = findModel(modelId)?.label?.split(" - ")[0] || modelId;
   statusEl.textContent =
-    `Transcript saved (${result.segments?.length || 0} segments, ${result.text.length} chars).` +
+    `${hadTranscript ? "Transcript replaced" : "Transcript saved"} using ${modelLabel} ` +
+    `(${result.segments?.length || 0} segments, ${result.text.length} chars).` +
     (skipped
       ? ` ${skipped} of ${result.chunkCount} chunks stalled and were left out ` +
         `(${result.failedChunks.map((c) => c.label).join(", ")}).`

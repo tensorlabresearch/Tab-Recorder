@@ -1359,6 +1359,17 @@ button.recording-badge {
   border-color: rgba(239, 35, 60, 0.4);
 }
 
+/* A rerun of work that already produced output: available, but not the
+   action the row is steering you toward. */
+.row-action.is-secondary {
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.row-action.is-secondary:hover:not(:disabled) {
+  opacity: 1;
+}
+
 .row-action.is-danger {
   border-color: rgba(182, 18, 37, 0.45);
   color: var(--tl-muted);

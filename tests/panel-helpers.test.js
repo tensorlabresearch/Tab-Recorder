@@ -457,7 +457,7 @@ describe("renderSessionRow", () => {
     expect(transcribeBtn.textContent).toBe("Transcribe");
   });
 
-  it("hides Transcribe button when transcript exists", () => {
+  it("offers Re-transcribe when a transcript already exists", () => {
     const session = {
       id: "s1",
       meetingLabel: "Test",
@@ -467,7 +467,22 @@ describe("renderSessionRow", () => {
     };
     const row = renderSessionRow(session);
     const transcribeBtn = row.querySelector('[data-action="transcribe"]');
-    expect(transcribeBtn).toBeNull();
+    expect(transcribeBtn).toBeTruthy();
+    expect(transcribeBtn.textContent).toBe("Re-transcribe");
+    expect(transcribeBtn.classList.contains("is-secondary")).toBe(true);
+    expect(transcribeBtn.title).toMatch(/replacing the existing transcript/i);
+  });
+
+  it("offers Re-transcribe for a transcript found on disk", () => {
+    const session = {
+      id: "s1",
+      meetingLabel: "Test",
+      startedAt: Date.now(),
+      fileName: "test.webm",
+      _fsTxtPath: "2026-01-15/test.txt",
+    };
+    const row = renderSessionRow(session);
+    expect(row.querySelector('[data-action="transcribe"]').textContent).toBe("Re-transcribe");
   });
 
   it("shows Convert to MP3 button when no mp3", () => {
