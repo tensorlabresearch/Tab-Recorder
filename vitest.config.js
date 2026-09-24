@@ -21,6 +21,7 @@ export default defineConfig({
         'extension/lib/whisperModel.js',
         'extension/lib/transcriptionHealth.js',
         'extension/lib/whisperClient.js',
+        'extension/lib/melSpectrogram.js',
         'extension/lib/utteranceSegmenter.js',
         'extension/lib/embeddingCluster.js',
         'extension/lib/diarizedTranscript.js',
